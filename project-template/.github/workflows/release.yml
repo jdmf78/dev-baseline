@@ -1,0 +1,83 @@
+name: Release
+
+# main only receives code through PRs that passed CI (see scripts/github-setup.sh),
+# so every push to main ships an image. Tags v* add a semver image tag.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/webhooks" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=long
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: services/webhooks
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to production
+    needs: image
+    # Off until you choose a target: gh variable set DEPLOY_ENABLED --body true
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          echo "Deploying $IMAGE@$DIGEST"
+          # Replace with your target. Docker on your own server, for example
+          # (SSH key and host key as environment secrets):
+          #   ssh deploy@server "cd ~/app && IMAGE=$IMAGE@$DIGEST just up"
+          # A managed PaaS: call its CLI or API with the image reference.
+          echo "::warning::No deploy target configured yet"

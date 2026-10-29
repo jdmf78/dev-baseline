@@ -1,0 +1,13 @@
+{
+  "name": "product",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteEnv": {
+    "PATH": "/home/vscode/.local/bin:/home/vscode/.local/share/mise/shims:${containerEnv:PATH}"
+  },
+  "forwardPorts": [3000]
+}

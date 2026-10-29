@@ -1,0 +1,27 @@
+#cloud-config
+# Provision a new Ubuntu VM with the same setup as your current server.
+# Paste as "user data" when creating the VM. Replace the two placeholders.
+users:
+  - name: dev
+    groups: [sudo]
+    shell: /bin/bash
+    # Passwordless sudo lets bootstrap run unattended. Agents are denied sudo
+    # in ~/.claude/settings.json; set a password and remove this line if you
+    # want a hard barrier.
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_LAPTOP_PUBLIC_KEY you@laptop
+
+ssh_pwauth: false
+disable_root: true
+package_update: true
+package_upgrade: true
+packages: [git, curl]
+
+# Clones the kit (the repo must be public) and runs the bootstrap; output goes
+# to /home/dev/bootstrap.log. Then SSH in and run machine/login.sh.
+# Private copy of the kit? Delete runcmd, scp the kit over, run bootstrap.sh.
+runcmd:
+  - >-
+    sudo -u dev -H bash -lc 'git clone https://github.com/YOUR_USER/dev-baseline.git ~/dev-baseline
+    && ~/dev-baseline/machine/bootstrap.sh --harden --web > ~/bootstrap.log 2>&1'

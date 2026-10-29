@@ -1,0 +1,84 @@
+# One task interface for you, Claude Code, Codex and CI (CI runs `just ci`).
+# Recipes marked STACK are placeholders to fill in once you choose a stack.
+
+set dotenv-load
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+image := "webhooks:dev"
+compose := "docker compose -f deploy/compose.yaml --env-file .env"
+
+# List recipes
+default:
+    @just --list
+
+# Install pinned tools, git hooks and a local .env
+setup:
+    mise trust --quiet
+    mise install
+    just hooks
+    @test -f .env || { cp .env.example .env && echo "Created .env from .env.example: fill it in."; }
+    @echo "STACK: install dependencies here (pnpm install / uv sync / go mod download)"
+
+# Block commits that contain secrets
+hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    hook="$(git rev-parse --git-path hooks)/pre-commit"
+    printf '#!/bin/sh\nexec gitleaks git --pre-commit --staged --redact --no-banner\n' > "$hook"
+    chmod +x "$hook"
+
+# Format code
+fmt:
+    @echo "STACK: add a formatter (biome or prettier, ruff format, gofmt)"
+
+# Lint workflows, shell scripts, and committed history for secrets
+lint:
+    actionlint
+    shellcheck scripts/*.sh .devcontainer/*.sh
+    gitleaks git --redact --no-banner
+    @echo "STACK: add your language linter (biome/eslint, ruff, golangci-lint)"
+
+# Run tests
+test:
+    cd services/webhooks && node --test
+
+# Build container images
+build:
+    docker build --tag {{image}} services/webhooks
+
+# Everything CI checks
+ci: lint test build
+
+# Run the webhook service locally with auto-reload
+dev:
+    cd services/webhooks && node --watch src/server.js
+
+# Forward this repo's GitHub webhooks to the local service (dev only)
+webhook-forward events="push,pull_request,issues":
+    gh webhook forward --repo="$GITHUB_REPO" --events={{events}} \
+      --url="http://localhost:${PORT:-3000}/webhook" --secret="$WEBHOOK_SECRET"
+
+# Send a signed fake event to the local service, no GitHub involved
+webhook-ping event="ping":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    body='{"zen":"Design for failure.","hook_id":0}'
+    sig="sha256=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $NF}')"
+    curl -sS -w '\n' "http://localhost:${PORT:-3000}/webhook" \
+      -H 'content-type: application/json' \
+      -H 'x-github-event: {{event}}' \
+      -H "x-github-delivery: $(node -e 'console.log(crypto.randomUUID())')" \
+      -H "x-hub-signature-256: $sig" \
+      --data "$body"
+
+# Start the service behind Caddy with HTTPS (run on the server)
+up:
+    {{compose}} up -d --build
+
+# Stop the server stack
+down:
+    {{compose}} down
+
+# Follow the server stack's logs
+logs:
+    {{compose}} logs -f

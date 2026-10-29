@@ -1,0 +1,13 @@
+# ~/.codex/config.toml: user-level defaults for every project on this machine.
+# A trusted repo can override these in its own .codex/config.toml.
+
+# Ask before anything outside the sandbox (network, writes outside the repo).
+approval_policy = "on-request"
+
+# Commands may write inside the current repo only.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+# No outbound network from sandboxed commands; Codex asks when it needs it
+# (e.g. to install dependencies).
+network_access = false

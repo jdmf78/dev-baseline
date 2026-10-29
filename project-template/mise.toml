@@ -1,0 +1,9 @@
+# Tool versions for this repo: the same locally, in CI (jdx/mise-action) and in
+# the devcontainer. Add your stack once chosen, e.g. python = "3.13", uv = "0",
+# go = "1.25", pnpm = "10".
+[tools]
+node = "24"
+just = "1"
+actionlint = "1"
+gitleaks = "8"
+shellcheck = "0.11"

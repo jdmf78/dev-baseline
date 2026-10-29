@@ -1,0 +1,35 @@
+# The webhook service behind Caddy (automatic HTTPS) on your server.
+# Run from the repo root with `just up` (reads .env). Needs DNS for $DOMAIN
+# pointing at this server and 80/443 open (machine/bootstrap.sh --web).
+name: product
+
+services:
+  webhooks:
+    image: ${IMAGE:-webhooks:dev}
+    build: ../services/webhooks
+    env_file: ../.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+    restart: unless-stopped
+    # No published ports: only Caddy reaches it, over the compose network.
+    # (Published Docker ports would bypass ufw.)
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [webhooks]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

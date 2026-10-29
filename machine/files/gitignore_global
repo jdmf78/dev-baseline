@@ -1,0 +1,7 @@
+# Global ignores: a safety net under every repo's own .gitignore.
+.env
+.env.local
+*.pem
+*.key
+.DS_Store
+*.swp

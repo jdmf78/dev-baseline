@@ -1,0 +1,15 @@
+# Caddy obtains and renews the TLS certificate for {$DOMAIN} on its own.
+{$DOMAIN} {
+	request_body {
+		max_size 5MB
+	}
+
+	handle /webhook {
+		reverse_proxy webhooks:3000
+	}
+
+	# Nothing else is public; /healthz stays internal.
+	handle {
+		respond 404
+	}
+}

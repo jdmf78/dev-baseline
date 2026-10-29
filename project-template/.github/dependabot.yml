@@ -1,0 +1,26 @@
+# Weekly update PRs. The cooldown skips releases younger than 7 days, giving
+# the ecosystem time to catch a compromised release before you adopt it.
+# Add your stack's ecosystem (pip/uv, gomod, npm at the root) once chosen.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /services/webhooks
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /services/webhooks
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
