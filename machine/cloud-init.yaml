@@ -1,6 +1,7 @@
 #cloud-config
 # Provision a new Ubuntu VM with the same setup as your current server.
-# Paste as "user data" when creating the VM. Replace the two placeholders.
+# Paste as "user data" when creating the VM. Replace the three placeholders
+# (your laptop key, YOUR_USER, YOUR_USER/YOUR_PROJECT).
 users:
   - name: dev
     groups: [sudo]
@@ -24,4 +25,5 @@ packages: [git, curl]
 runcmd:
   - >-
     sudo -u dev -H bash -lc 'git clone https://github.com/YOUR_USER/dev-baseline.git ~/dev-baseline
-    && ~/dev-baseline/machine/bootstrap.sh --harden --web > ~/bootstrap.log 2>&1'
+    && ~/dev-baseline/machine/bootstrap.sh --harden --web --project YOUR_USER/YOUR_PROJECT
+    > ~/bootstrap.log 2>&1'

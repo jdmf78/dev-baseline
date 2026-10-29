@@ -1,17 +1,20 @@
 # dev-baseline
 
-A reproducible setup for building a product on a remote Ubuntu server with
-Claude Code, Codex, GitHub, webhooks and a CI/CD pipeline. It has two parts:
+A reproducible setup for developing on a remote Ubuntu server or container with
+Claude Code, Codex, GitHub, webhooks and a CI/CD pipeline. One command turns a
+fresh machine into a dev box for a GitHub repo you choose. It has two parts:
 
-- **`machine/`** runs once per server. It installs the toolchain, hardens SSH,
-  creates a per-machine GitHub key, and adds safe defaults for both AI CLIs.
-- **`project-template/`** is copied once per product repo. It brings CI, release,
-  AI review, a GitHub webhook receiver, deploy files, and the rules agents follow.
+- **`machine/`** runs once per server. It installs the toolchain (including
+  Claude Code, Codex and the latest Python), hardens SSH, creates a per-machine
+  GitHub key, signs you in, and clones your project.
+- **`project-template/`** seeds a new product repo. It brings CI, release, AI
+  review, a GitHub webhook receiver, deploy files, and the rules agents follow.
 
-Push this folder to GitHub as `dev-baseline`. It holds no secrets, so it can be
-public, and any new machine can clone it.
+The kit holds no secrets or personal details, so it can be public and any new
+machine can clone it.
 
 ```
+install.sh              one command: bootstrap + sign-in + your project
 machine/
   bootstrap.sh          idempotent server setup (re-run any time)
   login.sh              interactive sign-in, once per machine
@@ -29,51 +32,68 @@ project-template/
   .devcontainer/        the same toolchain in Codespaces or any Docker host
 ```
 
-## 1. Prepare the server (once)
+## 1. Set up a server or container (one command)
 
-Start from an SSH session as a normal user with sudo, logged in with a key from
-your laptop (not a password). For the first `--harden` run, keep a second SSH
-session open as a fallback.
+Works on Ubuntu 24.04+ as root (the default in LXC containers) or as a user
+with sudo. First create the GitHub repo you'll develop in, if it doesn't exist
+yet; empty is fine:
+
+```bash
+gh repo create you/your-app --private
+```
+
+Then, on the new machine:
 
 ```bash
 git clone https://github.com/YOUR_USER/dev-baseline.git ~/dev-baseline
 ```
 
-(If your copy of the kit is private, copy it over from your laptop instead:
-`scp -r dev-baseline your-server:~/`.)
-
 ```bash
-~/dev-baseline/machine/bootstrap.sh --harden --web
+~/dev-baseline/install.sh --project you/your-app --harden --web
 ```
 
-No personal details are needed. `login.sh` later sets git to your GitHub
-username and private noreply address; pass `--git-name` and `--git-email` here
-only if you want a different identity.
-
-```bash
-exec bash -l
-```
+The unattended part runs first (`machine/bootstrap.sh`), then the sign-ins and
+project setup (`machine/login.sh`, section 2). No personal details are needed:
+git uses your GitHub username and private noreply address unless you pass
+`--git-name` and `--git-email`. Over SSH, keep a second session open during the
+first `--harden` run. To run the two halves separately (cloud-init runs the
+first), use `machine/bootstrap.sh` with the same options, then `machine/login.sh`.
 
 What `bootstrap.sh` does (each step skips itself if already done):
 
 | Area | Result |
 |---|---|
-| Packages | build tools, git, jq, ripgrep, fd, tmux, direnv, shellcheck, bubblewrap (agent sandboxes), automatic security updates |
+| Packages | build tools, curl, git, screen, tmux, jq, ripgrep, fd, direnv, shellcheck, bubblewrap (agent sandboxes), automatic security updates |
+| Python and tools | via mise: the latest Python (re-running upgrades it), Node 24, just, actionlint, gitleaks |
+| Claude Code, Codex | both installed (Claude's native installer; Codex from npm via mise) or updated to the latest release, plus default settings if you have none |
 | GitHub CLI | from GitHub's apt repo |
-| mise | runtime manager, plus global node 24, just, actionlint, gitleaks |
-| Docker | Engine + compose + buildx from Docker's repo, log rotation, docker group |
+| Docker | Engine + compose + buildx from Docker's repo, log rotation |
 | Git | sensible defaults, SSH commit signing, global ignore for `.env` and keys |
 | SSH key | `~/.ssh/github_ed25519`, one per machine, GitHub host keys pinned from the API |
-| Shell | mise + direnv activation; `dev` alias opens a tmux session that survives SSH drops |
-| AI CLIs | installs Claude Code / Codex if missing; writes `~/.claude/settings.json` and `~/.codex/config.toml` if you have none |
-| `--harden` | key-only SSH, no root login, fail2ban, ufw denying inbound except SSH |
+| Shell | mise + direnv activation; `dev` opens a tmux session in your project that survives SSH drops |
+| `--harden` | key-only SSH, fail2ban, ufw denying inbound except SSH |
 | `--web` | opens 80/443 so GitHub can reach your webhook endpoint |
 
-## 2. Sign in (once per machine)
+### As root, and in containers
 
-```bash
-~/dev-baseline/machine/login.sh
-```
+- Everything runs the same as root, without sudo.
+- `--harden` run as root keeps root login, but with keys only
+  (`PermitRootLogin prohibit-password`), so you can't lock yourself out. With
+  no SSH server (you enter with `lxc exec` or `pct enter`) or no authorized key,
+  it skips SSH hardening with a warning.
+- Docker inside LXC needs nesting and keyctl (Proxmox: Options > Features).
+  Without them the script rolls Docker back and carries on.
+- ufw and fail2ban often can't run in unprivileged containers. The script warns
+  and continues; firewall the container at the host instead.
+- Agents running as root can change anything in the container, and the Claude
+  Code and Codex sandboxes may not work inside one. Treat the container as the
+  boundary and keep it disposable. Claude Code refuses
+  `--dangerously-skip-permissions` as root unless you set `IS_SANDBOX=1`, which
+  only makes sense in a throwaway container.
+
+## 2. Sign-in and project setup (`machine/login.sh`)
+
+`install.sh` runs this for you. Re-run it any time; finished steps are skipped.
 
 - **GitHub CLI** uses the device flow: open the printed URL on your laptop or phone
   and enter the code. The script then uploads this machine's key for both
@@ -84,35 +104,29 @@ What `bootstrap.sh` does (each step skips itself if already done):
 - **Codex** runs `codex login --device-auth`. If your ChatGPT account refuses
   device login, enable it in ChatGPT's security settings, or tunnel the callback:
   `ssh -L 1455:localhost:1455 your-server`, then run `codex login`.
-- **Claude Code**: run `dev`, then `claude`. On a server it prints a login URL;
-  open it locally and paste the code back.
+- **Claude Code** runs `claude auth login`: open the printed URL on your laptop,
+  approve, and paste the code back. Use `claude auth login --console` to bill an
+  Anthropic Console account instead of a subscription.
+- **Your project** is cloned to `~/code/REPO` over SSH. If it has a `mise.toml`
+  or a `just setup` recipe, those run too, and `dev` opens in that folder.
 
-## 3. Create the product repo
+To switch projects, or to add another one, run
+`machine/login.sh --project you/other-app`; `dev` follows the latest.
 
-```bash
-cp -r ~/dev-baseline/project-template ~/code/myproduct && cd ~/code/myproduct
-```
+## 3. Starting a new project from the template
 
-```bash
-git init && just setup && git add -A && git commit -m "chore: baseline from dev-baseline"
-```
-
-```bash
-gh repo create myproduct --private --source . --push
-```
-
-```bash
-scripts/github-setup.sh
-```
+If the `--project` repo is empty, `login.sh` offers to start it from
+`project-template/`: it copies the files in, runs `just setup`, pushes the first
+commit, and offers to run `scripts/github-setup.sh`. You can also run that
+script yourself later from inside the project.
 
 `github-setup.sh` configures squash-only merges, branch auto-delete, Dependabot
 alerts and fixes, secret scanning (where your plan allows), a `production`
 environment, and a ruleset on `main`: PRs only, the `ci` check must pass, no
 force-push or deletion. That ruleset applies to you and your agents alike.
 
-If you will create several products, push `project-template/` as its own repo,
-mark it as a template (`gh repo edit --template`), and start each product with
-`gh repo create myproduct --template YOU/product-template --private --clone`.
+An existing project keeps its own files. Copy over the template pieces you
+want, such as `AGENTS.md`, `CLAUDE.md`, `.claude/settings.json` or the workflows.
 
 ## 4. The daily loop
 
@@ -182,7 +196,7 @@ personal token.
 
 | Layer | Lives in | Reproduce with |
 |---|---|---|
-| Machine | `dev-baseline/machine` | `cloud-init.yaml` for a new VM; clone + `bootstrap.sh` for an existing one |
+| Machine | `install.sh`, `machine/` | clone + `install.sh --project …` on any Ubuntu box or container; `cloud-init.yaml` for a new VM |
 | Toolchain | repo `mise.toml` | `just setup`; mise-action in CI; the devcontainer |
 | Tasks | repo `justfile` | identical commands everywhere |
 | Agent rules | `AGENTS.md`, `CLAUDE.md`, `.claude/settings.json` | committed with the code |
