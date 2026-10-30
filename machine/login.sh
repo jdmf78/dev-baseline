@@ -32,15 +32,19 @@ done
 [[ -n $PROJECT ]] || PROJECT=$(cat "$STATE/project" 2>/dev/null || true)
 [[ -f $KEY ]] || { echo "Missing $KEY: run bootstrap.sh first." >&2; exit 1; }
 
-# Clone the project to ~/code/NAME, install its tools, and make `dev` open there.
-# An empty repo can be started from project-template.
+# Create the project on GitHub if it's missing (after asking), clone it to
+# ~/code/NAME, install its tools, and make `dev` open there. An empty repo can
+# be started from project-template.
 setup_project() {
   local dir="$HOME/code/${PROJECT##*/}" seeded=0
   step "Project $PROJECT -> $dir"
   if ! gh repo view "$PROJECT" --json name >/dev/null 2>&1; then
-    echo "Can't find $PROJECT on GitHub with this login. Create it, then re-run:" >&2
-    echo "  gh repo create $PROJECT --private" >&2
-    return 1
+    if yes_no "$PROJECT isn't on GitHub (or this login can't see it). Create it now, private?"; then
+      gh repo create "$PROJECT" --private
+    else
+      echo "Create it, then re-run: ~/dev-baseline/machine/login.sh --project $PROJECT" >&2
+      return 1
+    fi
   fi
   mkdir -p "$STATE" "$HOME/code"
   echo "$PROJECT" >"$STATE/project"
@@ -150,7 +154,8 @@ fi
 
 step "Ready"
 cat <<'EOF'
-Open a new shell, then:
+Open a new shell so PATH and the `dev` command load:  exec bash -l
+Then:
   dev      tmux session in your project that survives SSH drops
   claude   Claude Code        codex   Codex
 EOF

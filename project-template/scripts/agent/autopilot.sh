@@ -27,14 +27,19 @@ mkdir -p .agent-logs
 count() { gh "$1" list --label agent --state open --json number --jq length; }
 
 # Merging happens here, under your own login, never inside the agents.
+# Relies on scripts/github-setup.sh having protected main (required `ci` check).
 merge_approved() {
   [[ ${AUTO_MERGE:-0} == 1 ]] || return 0
   local n
   for n in $(gh pr list --label agent:approved --state open --json number --jq '.[].number'); do
     gh pr update-branch "$n" >/dev/null 2>&1 || true # rules require an up-to-date branch
-    if gh pr merge "$n" --auto --squash --delete-branch >/dev/null 2>&1 ||
-      gh pr merge "$n" --squash --delete-branch >/dev/null 2>&1; then
-      echo "  merging #$n once its checks pass"
+    if gh pr merge "$n" --auto --squash --delete-branch >/dev/null 2>&1; then
+      echo "  #$n merges as soon as its checks pass"
+    elif gh pr checks "$n" >/dev/null 2>&1 && gh pr merge "$n" --squash --delete-branch >/dev/null 2>&1; then
+      # Auto-merge unavailable (e.g. already mergeable): merge only when every check passed.
+      echo "  merged #$n (all checks passed)"
+    else
+      echo "  #$n waits: checks not passed yet, or merging is blocked"
     fi
   done
 }

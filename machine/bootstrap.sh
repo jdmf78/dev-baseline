@@ -4,7 +4,7 @@
 # user with sudo. Safe to re-run: every step skips work that is already done.
 #
 # Usage: ./bootstrap.sh [options]
-#   --project OWNER/REPO  your development repo; login.sh clones it to ~/code/REPO
+#   --project OWNER/REPO  your development repo; login.sh creates it if missing and clones it to ~/code/REPO
 #   --git-name NAME       git user.name (default: your GitHub username, set by login.sh)
 #   --git-email EMAIL     git user.email (default: your private GitHub noreply address)
 #   --harden              key-only SSH, ufw firewall (deny inbound), fail2ban

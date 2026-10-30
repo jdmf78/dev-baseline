@@ -1,7 +1,8 @@
 #cloud-config
 # Provision a new Ubuntu VM with the same setup as your current server.
-# Paste as "user data" when creating the VM. Replace the three placeholders
-# (your laptop key, YOUR_USER, YOUR_USER/YOUR_PROJECT).
+# Paste as "user data" when creating the VM. Replace the two placeholders:
+# your laptop's public key, and YOUR_USERNAME/YOUR_PROJECT (your product's
+# GitHub repo; see "what --project means" in the README).
 users:
   - name: dev
     groups: [sudo]
@@ -19,11 +20,13 @@ package_update: true
 package_upgrade: true
 packages: [git, curl]
 
-# Clones the kit (the repo must be public) and runs the bootstrap; output goes
-# to /home/dev/bootstrap.log. Then SSH in and run machine/login.sh.
-# Private copy of the kit? Delete runcmd, scp the kit over, run bootstrap.sh.
+# Clones the kit and runs the unattended part; output goes to
+# /home/dev/bootstrap.log. Then SSH in as dev and run, in order:
+#   ~/dev-baseline/machine/login.sh     (sign-ins and your project)
+#   exec bash -l                        (load the new shell setup)
+# Using a private fork of the kit? Delete runcmd, scp the kit over, run bootstrap.sh.
 runcmd:
   - >-
-    sudo -u dev -H bash -lc 'git clone https://github.com/YOUR_USER/dev-baseline.git ~/dev-baseline
-    && ~/dev-baseline/machine/bootstrap.sh --harden --web --project YOUR_USER/YOUR_PROJECT
+    sudo -u dev -H bash -lc 'git clone https://github.com/jdmf78/dev-baseline.git ~/dev-baseline
+    && ~/dev-baseline/machine/bootstrap.sh --harden --project YOUR_USERNAME/YOUR_PROJECT
     > ~/bootstrap.log 2>&1'

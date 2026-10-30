@@ -7,6 +7,7 @@
 # Usage: ./install.sh --project OWNER/REPO [--harden] [--web] [--no-docker]
 #                     [--git-name NAME] [--git-email EMAIL]
 #   --project OWNER/REPO   the GitHub repo you develop in, cloned to ~/code/REPO
+#                          (created as a private repo, if you agree, when missing)
 #   Other options go to machine/bootstrap.sh; see machine/bootstrap.sh --help.
 set -euo pipefail
 
