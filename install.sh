@@ -4,8 +4,8 @@
 # Code sign-in plus your project (machine/login.sh). Works as root or with
 # sudo. Safe to re-run.
 #
-# Usage: ./install.sh --project OWNER/REPO [--harden] [--web] [--no-docker]
-#                     [--git-name NAME] [--git-email EMAIL]
+# Usage: ./install.sh --project OWNER/REPO [--domain NAME] [--harden] [--web]
+#                     [--no-docker] [--git-name NAME] [--git-email EMAIL]
 #   --project OWNER/REPO   the GitHub repo you develop in, cloned to ~/code/REPO
 #                          (created as a private repo, if you agree, when missing)
 #   Other options go to machine/bootstrap.sh; see machine/bootstrap.sh --help.
@@ -21,3 +21,10 @@ done
 
 "$HERE/machine/bootstrap.sh" "$@"
 "$HERE/machine/login.sh"
+
+# Hand over a fresh shell, so PATH, mise and the `dev` command are live.
+if [[ -t 0 && -t 1 ]]; then
+  echo
+  echo "Opening a fresh shell. Type: dev"
+  exec bash -l
+fi

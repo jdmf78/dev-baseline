@@ -5,13 +5,13 @@
 #   --repo          defaults to the repo of the current directory
 #   --webhook-url   create or update a repo webhook pointing at your deployed
 #                   service (e.g. https://hooks.example.com/webhook); the
-#                   secret is WEBHOOK_SECRET from .env, generated if empty
-#   --labels-only   only create the labels the agent team uses
+#                   secret is WEBHOOK_SECRET from .env, generated if empty, and
+#                   the events are WEBHOOK_EVENTS (default push,pull_request,issues)
+#   --labels-only   only create the labels agents use
 # Needs gh (logged in as a repo admin, admin:repo_hook scope), jq and openssl.
 set -euo pipefail
 
 REPO="" WEBHOOK_URL="" LABELS_ONLY=0
-EVENTS='["push","pull_request","issues"]'
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
@@ -28,14 +28,11 @@ done
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 [[ -n $REPO ]] || REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 
-log "Labels for the agent team"
+log "Labels agents use"
 while IFS='|' read -r name color desc; do
   gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" --force >/dev/null
 done <<'EOF'
-agent|5319e7|Work item or PR for the agent team
-agent:in-progress|fbca04|A developer agent is working on it
-agent:approved|0e8a16|Reviewer found no blocking issues
-agent:changes|d93f0b|Reviewer requested changes
+agent|5319e7|Opened by an AI agent
 blocked|b60205|Needs a human decision
 EOF
 ((LABELS_ONLY)) && exit 0
@@ -103,7 +100,9 @@ if [[ -n $WEBHOOK_URL ]]; then
     chmod 600 .env
     echo "Generated WEBHOOK_SECRET and saved it to .env."
   fi
-  hook=$(jq -n --arg url "$WEBHOOK_URL" --arg secret "$secret" --argjson events "$EVENTS" \
+  events=${WEBHOOK_EVENTS:-$(sed -n 's/^WEBHOOK_EVENTS=//p' .env | tail -1)}
+  events=$(jq -cn --arg e "${events:-push,pull_request,issues}" '$e | split(",") | map(select(length > 0))')
+  hook=$(jq -n --arg url "$WEBHOOK_URL" --arg secret "$secret" --argjson events "$events" \
     '{name: "web", active: true, events: $events,
       config: {url: $url, content_type: "json", secret: $secret, insecure_ssl: "0"}}')
   hook_id=$(gh api --paginate "repos/$REPO/hooks" --jq ".[] | select(.config.url == \"$WEBHOOK_URL\") | .id")

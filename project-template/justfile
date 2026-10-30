@@ -46,29 +46,29 @@ test:
 build:
     docker build --tag {{image}} services/webhooks
 
-# Fast checks agents run before every PR (and the Stop hook enforces)
+# Fast checks: must pass before every PR
 check: lint test
 
 # Everything CI checks
 ci: check build
 
-# --- Agent team (see AGENTS.md, "Team workflow") ---
+# --- Automation (see AGENTS.md) ---
 
-# Run the team unattended, one wave per run (AUTO_MERGE=1 to merge approved PRs)
-autopilot runs="5":
+# Build the GSD roadmap unattended and ship it as a PR (AUTO_MERGE=1 merges it once CI passes)
+autopilot runs="3":
     scripts/agent/autopilot.sh {{runs}}
 
-# Hand one GitHub issue to Codex as an extra developer
-codex-task issue:
-    scripts/agent/codex-task.sh {{issue}}
+# GitHub repo settings: branch protection, merge rules, labels, security features
+repo-setup:
+    scripts/github-setup.sh
 
-# Codex second-opinion review of a PR, or of this branch
-codex-review pr="":
-    scripts/agent/codex-review.sh {{pr}}
+# Register or update the GitHub webhook for a public URL
+webhook-register url:
+    scripts/github-setup.sh --webhook-url {{url}}
 
-# Create the GitHub labels the team uses
-labels:
-    scripts/github-setup.sh --labels-only
+# Redeliver failed webhook deliveries from the last N hours
+webhook-redeliver url hours="24":
+    scripts/webhook-redeliver.sh {{url}} {{hours}}
 
 # Remove worktrees whose folders are gone, and list the rest
 worktrees:
@@ -80,7 +80,7 @@ dev:
     cd services/webhooks && node --watch src/server.js
 
 # Forward this repo's GitHub webhooks to the local service (dev only)
-webhook-forward events="push,pull_request,issues":
+webhook-forward events=env_var_or_default("WEBHOOK_EVENTS", "push,pull_request,issues"):
     gh webhook forward --repo="$GITHUB_REPO" --events={{events}} \
       --url="http://localhost:${PORT:-3000}/webhook" --secret="$WEBHOOK_SECRET"
 

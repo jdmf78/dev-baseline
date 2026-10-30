@@ -1,42 +1,61 @@
 #!/usr/bin/env bash
-# Unattended team loop. Runs Claude Code headless with /next, one wave per
-# run, until no team issues or PRs are open, a run fails, or MAX_RUNS is hit.
-# Run it inside `dev` (tmux) so it survives SSH drops.
+# Unattended build loop on top of GSD Core. Runs /gsd-autonomous headless until
+# the milestone is built and verified, then /gsd-ship opens the PR. Stops when
+# the PR exists, a run fails, or MAX_RUNS is reached. Run it inside `dev`
+# (tmux) so it survives SSH drops. Start the project first with
+# /gsd-new-project (or /gsd-new-milestone) in Claude Code or Codex.
 #
-# Usage: scripts/agent/autopilot.sh [MAX_RUNS]        (default 5)
+# Usage: scripts/agent/autopilot.sh [MAX_RUNS]        (default 3)
 # Environment:
-#   AUTOPILOT_BUDGET_USD  spending cap per run, estimated (default 10)
-#   AUTOPILOT_PARALLEL    developers per wave (default 3)
-#   AUTOPILOT_PAUSE       seconds between runs, for CI to finish (default 180)
-#   AUTO_MERGE=1          merge PRs the reviewer approved once CI passes.
-#                         Without it, approved PRs wait for you.
+#   AUTOPILOT_BUDGET_USD  spending cap per run, estimated (default 25)
+#   AUTO_MERGE=1          merge the milestone PR once CI passes;
+#                         without it the PR waits for you
 set -euo pipefail
 
-max_runs=${1:-5}
-budget=${AUTOPILOT_BUDGET_USD:-10}
-parallel=${AUTOPILOT_PARALLEL:-3}
-pause=${AUTOPILOT_PAUSE:-180}
+max_runs=${1:-3}
+budget=${AUTOPILOT_BUDGET_USD:-25}
+config=.planning/config.json
 
 cd "$(git rev-parse --show-toplevel)"
-if [[ -n $(git status --porcelain) ]]; then
-  echo "Uncommitted changes here: commit or stash them first." >&2
+if [[ ! -f $config ]]; then
+  echo "No GSD project here yet. In Claude Code, run /gsd-new-project first." >&2
   exit 1
 fi
+
+# Unattended settings: decide without asking, and build the milestone on its
+# own branch (gsd/...), because main only accepts reviewed PRs.
+tmp=$(mktemp)
+jq '.mode = "yolo" | .workflow.skip_discuss = true | .workflow.auto_advance = true
+  | .git.branching_strategy = "milestone"' "$config" >"$tmp"
+mv "$tmp" "$config"
 mkdir -p .agent-logs
 
-count() { gh "$1" list --label agent --state open --json number --jq length; }
+run() {
+  local log
+  log=".agent-logs/$(date -u +%Y%m%dT%H%M%SZ)-${1//[^a-z]/}.json"
+  echo "== $1 (log: $log)"
+  if ! claude -p "$1" --permission-mode auto --permission-prompts none \
+    --max-budget-usd "$budget" --output-format json >"$log"; then
+    echo "The run failed; see $log" >&2
+    exit 1
+  fi
+  jq -r '"  estimated cost: $\((.total_cost_usd // 0) * 100 | round / 100)", .result' "$log" | tail -n 20
+}
+
+shipped_prs() {
+  gh pr list --state open --author @me --json number,headRefName \
+    --jq '.[] | select(.headRefName | startswith("gsd/")) | .number'
+}
 
 # Merging happens here, under your own login, never inside the agents.
 # Relies on scripts/github-setup.sh having protected main (required `ci` check).
-merge_approved() {
-  [[ ${AUTO_MERGE:-0} == 1 ]] || return 0
+merge() {
   local n
-  for n in $(gh pr list --label agent:approved --state open --json number --jq '.[].number'); do
+  for n in $(shipped_prs); do
     gh pr update-branch "$n" >/dev/null 2>&1 || true # rules require an up-to-date branch
     if gh pr merge "$n" --auto --squash --delete-branch >/dev/null 2>&1; then
       echo "  #$n merges as soon as its checks pass"
     elif gh pr checks "$n" >/dev/null 2>&1 && gh pr merge "$n" --squash --delete-branch >/dev/null 2>&1; then
-      # Auto-merge unavailable (e.g. already mergeable): merge only when every check passed.
       echo "  merged #$n (all checks passed)"
     else
       echo "  #$n waits: checks not passed yet, or merging is blocked"
@@ -44,27 +63,14 @@ merge_approved() {
   done
 }
 
-for ((run = 1; run <= max_runs; run++)); do
-  git switch -q main
-  git pull -q --ff-only
-  issues=$(count issue)
-  prs=$(count pr)
-  if ((issues == 0 && prs == 0)); then
-    echo "No open team issues or PRs: the goal is done (or not planned yet; run /goal)."
+for ((i = 1; i <= max_runs; i++)); do
+  echo "=== Run $i of $max_runs"
+  run "/gsd-autonomous --text"
+  run "/gsd-ship"
+  if [[ -n $(shipped_prs) ]]; then
+    echo "The milestone is shipped as a PR: $(gh pr list --author @me --state open --json url --jq '.[0].url')"
+    if [[ ${AUTO_MERGE:-0} == 1 ]]; then merge; else echo "Review and merge it, or re-run with AUTO_MERGE=1."; fi
     exit 0
   fi
-
-  log=".agent-logs/run-$(date -u +%Y%m%dT%H%M%SZ).json"
-  echo "== Run $run/$max_runs: $issues open issues, $prs open PRs (log: $log)"
-  if ! claude -p "/next $parallel" --permission-mode auto --permission-prompts none \
-    --max-budget-usd "$budget" --output-format json >"$log"; then
-    echo "The run failed; see $log" >&2
-    exit 1
-  fi
-  jq -r '"  estimated cost: $\((.total_cost_usd // 0) * 100 | round / 100)", .result' "$log" | tail -n 30
-  grep -q 'GOAL COMPLETE' "$log" && { echo "Goal complete."; merge_approved; exit 0; }
-
-  merge_approved
-  ((run < max_runs)) && sleep "$pause"
 done
-echo "Reached $max_runs runs. Run again to continue."
+echo "Not shipped after $max_runs runs. Check progress with /gsd-progress, then run again."

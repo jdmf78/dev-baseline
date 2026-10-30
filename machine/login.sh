@@ -70,10 +70,9 @@ setup_project() {
     git -C "$dir" add -A
     git -C "$dir" commit -q -m "chore: start from the dev-baseline project template"
     git -C "$dir" push -q -u origin HEAD
-    echo "Pushed the template to $PROJECT."
-    if yes_no "Apply branch protection and repo settings now (scripts/github-setup.sh)?"; then
-      (cd "$dir" && scripts/github-setup.sh)
-    fi
+    echo "Pushed the template to $PROJECT. Applying branch protection and repo settings."
+    (cd "$dir" && scripts/github-setup.sh) ||
+      echo "Repo settings incomplete; an agent can finish them with: just repo-setup" >&2
   fi
 }
 
@@ -154,8 +153,8 @@ fi
 
 step "Ready"
 cat <<'EOF'
-Open a new shell so PATH and the `dev` command load:  exec bash -l
-Then:
-  dev      tmux session in your project that survives SSH drops
-  claude   Claude Code        codex   Codex
+  dev      session in your project that keeps running when you disconnect
+  claude   then /gsd-new-project to give the team a goal, /gsd-autonomous to build it
+  codex    the same GSD commands work in Codex
+(If `dev` isn't found, open a new shell first: exec bash -l)
 EOF

@@ -2,6 +2,7 @@
 
 ## Claude Code notes
 
-- Shared permissions live in `.claude/settings.json`. Personal overrides go in
+- GSD Core (`/gsd-*`) and gstack (`/qa`, `/cso`, `/review` and others) are
+  installed globally on this machine, with their own hooks.
+- Shared permissions live in `.claude/settings.json`; personal overrides go in
   `.claude/settings.local.json` (gitignored).
-- Use plan mode for changes that touch more than one area of the layout above.

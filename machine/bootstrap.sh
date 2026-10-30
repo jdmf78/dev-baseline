@@ -5,10 +5,12 @@
 #
 # Usage: ./bootstrap.sh [options]
 #   --project OWNER/REPO  your development repo; login.sh creates it if missing and clones it to ~/code/REPO
+#   --domain NAME         base domain whose wildcard DNS (*.NAME) points here; agents publish
+#                         projects as PROJECT.NAME over HTTPS (implies --web)
 #   --git-name NAME       git user.name (default: your GitHub username, set by login.sh)
 #   --git-email EMAIL     git user.email (default: your private GitHub noreply address)
 #   --harden              key-only SSH, ufw firewall (deny inbound), fail2ban
-#   --web                 allow 80/443 inbound (to receive webhooks on this box)
+#   --web                 allow 80/443 inbound (sites, APIs and webhooks on this box)
 #   --no-docker           skip Docker Engine
 #   -h, --help            show this help
 set -euo pipefail
@@ -17,7 +19,7 @@ FILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/files"
 STATE="$HOME/.config/dev-baseline"
 MARK_BEGIN="# >>> dev-baseline >>>"
 MARK_END="# <<< dev-baseline <<<"
-PROJECT="" GIT_NAME="" GIT_EMAIL="" HARDEN=0 WEB=0 DOCKER=1 APT_UPDATED=0
+PROJECT="" DOMAIN="" GIT_NAME="" GIT_EMAIL="" HARDEN=0 WEB=0 DOCKER=1 APT_UPDATED=0
 USER=${USER:-$(id -un)} # containers often leave USER unset for root
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -33,6 +35,7 @@ systemd_running() { [[ -d /run/systemd/system ]]; }
 while (($#)); do
   case $1 in
     --project)   PROJECT=${2:?--project needs OWNER/REPO}; shift 2 ;;
+    --domain)    DOMAIN=${2:?--domain needs a name like dev.example.com}; WEB=1; shift 2 ;;
     --git-name)  GIT_NAME=${2:?--git-name needs a value}; shift 2 ;;
     --git-email) GIT_EMAIL=${2:?--git-email needs a value}; shift 2 ;;
     --harden)    HARDEN=1; shift ;;
@@ -44,6 +47,9 @@ while (($#)); do
 done
 if [[ -n $PROJECT && ! $PROJECT =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
   die "--project must look like OWNER/REPO (got: $PROJECT)"
+fi
+if [[ -n $DOMAIN && ! $DOMAIN =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
+  die "--domain must be a domain name like dev.example.com (got: $DOMAIN)"
 fi
 
 apt_install() {
@@ -263,6 +269,37 @@ ai_tools() {
   install_if_absent "$FILES/codex-config.toml" "$HOME/.codex/config.toml"
 }
 
+# The team: GSD Core plans and builds (goal -> phases -> parallel waves -> PR),
+# gstack checks quality (review, browser QA, security). Both install for Claude
+# Code and Codex, and re-running this updates them. Runs after ai_tools, so the
+# default settings exist before they add their hooks.
+agent_frameworks() {
+  log "GSD Core (planning and execution) for Claude Code and Codex"
+  local host gs="$HOME/.claude/skills/gstack"
+  for host in claude codex; do
+    mise exec -- npx -y @opengsd/gsd-core@latest "--$host" --global </dev/null ||
+      warn "GSD Core install for $host failed; re-run: npx @opengsd/gsd-core@latest --$host --global"
+  done
+
+  log "gstack (review, browser QA, security) for Claude Code and Codex"
+  mise use --global --yes bun@latest
+  # Chromium's system libraries, for gstack's browser QA on a headless server.
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+    libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libxkbcommon0 libxcomposite1 \
+    libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 libasound2t64 fonts-liberation >/dev/null ||
+    warn "Some browser libraries didn't install; gstack's /qa browser may not start."
+  if [[ -d $gs/.git ]]; then
+    git -C "$gs" pull -q --ff-only || warn "Couldn't update gstack in $gs; keeping the current version."
+  else
+    mkdir -p "$(dirname "$gs")"
+    git clone -q --single-branch --depth 1 https://github.com/garrytan/gstack.git "$gs"
+  fi
+  (cd "$gs" && mise exec -- ./setup </dev/null) ||
+    warn "gstack setup failed; re-run: cd $gs && ./setup"
+  (cd "$gs" && mise exec -- ./setup --host codex </dev/null) ||
+    warn "gstack for Codex failed (experimental there); Claude Code is unaffected."
+}
+
 harden_ssh() {
   ((HARDEN)) || return 0
   log "SSH: key-only login"
@@ -323,11 +360,17 @@ firewall() {
   warn "Docker-published ports bypass ufw. Bind app ports to 127.0.0.1 and publish only the proxy."
 }
 
-record_project() {
-  [[ -n $PROJECT ]] || return 0
+# Settings the sign-in step and the agents' playbooks read later.
+record_settings() {
   mkdir -p "$STATE"
-  echo "$PROJECT" >"$STATE/project"
-  log "Project $PROJECT recorded; login.sh clones it once GitHub is signed in."
+  if [[ -n $PROJECT ]]; then
+    echo "$PROJECT" >"$STATE/project"
+    log "Project $PROJECT recorded; login.sh clones it once GitHub is signed in."
+  fi
+  if [[ -n $DOMAIN ]]; then
+    echo "$DOMAIN" >"$STATE/domain"
+    log "Base domain $DOMAIN recorded; agents publish projects as NAME.$DOMAIN."
+  fi
 }
 
 summary() {
@@ -348,7 +391,8 @@ git_config
 ssh_key
 shell_config
 ai_tools
-record_project
+agent_frameworks
+record_settings
 harden_ssh
 firewall
 summary
