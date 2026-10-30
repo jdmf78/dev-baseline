@@ -34,7 +34,7 @@ fmt:
 # Lint workflows, shell scripts, and committed history for secrets
 lint:
     actionlint
-    shellcheck scripts/*.sh .devcontainer/*.sh
+    shellcheck scripts/*.sh scripts/agent/*.sh .devcontainer/*.sh
     gitleaks git --redact --no-banner
     @echo "STACK: add your language linter (biome/eslint, ruff, golangci-lint)"
 
@@ -46,8 +46,34 @@ test:
 build:
     docker build --tag {{image}} services/webhooks
 
+# Fast checks agents run before every PR (and the Stop hook enforces)
+check: lint test
+
 # Everything CI checks
-ci: lint test build
+ci: check build
+
+# --- Agent team (see AGENTS.md, "Team workflow") ---
+
+# Run the team unattended, one wave per run (AUTO_MERGE=1 to merge approved PRs)
+autopilot runs="5":
+    scripts/agent/autopilot.sh {{runs}}
+
+# Hand one GitHub issue to Codex as an extra developer
+codex-task issue:
+    scripts/agent/codex-task.sh {{issue}}
+
+# Codex second-opinion review of a PR, or of this branch
+codex-review pr="":
+    scripts/agent/codex-review.sh {{pr}}
+
+# Create the GitHub labels the team uses
+labels:
+    scripts/github-setup.sh --labels-only
+
+# Remove worktrees whose folders are gone, and list the rest
+worktrees:
+    git worktree prune
+    git worktree list
 
 # Run the webhook service locally with auto-reload
 dev:

@@ -113,16 +113,20 @@ base_packages() {
 }
 
 github_cli() {
-  have gh && return 0
-  log "GitHub CLI"
-  as_root install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
-    as_root tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
-  as_root chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-  echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
-    as_root tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-  APT_UPDATED=0
-  apt_install gh
+  log "GitHub CLI (from GitHub's apt repo; Ubuntu's own package lags behind)"
+  local list=/etc/apt/sources.list.d/github-cli.list
+  if [[ ! -f $list ]]; then
+    as_root install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg |
+      as_root tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+    as_root chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" |
+      as_root tee "$list" >/dev/null
+    APT_UPDATED=0
+  fi
+  if ((!APT_UPDATED)); then as_root apt-get update -qq; APT_UPDATED=1; fi
+  # Installs gh, or upgrades an older Ubuntu build to GitHub's current release.
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh
 }
 
 mise_tools() {
@@ -226,8 +230,12 @@ ssh_key() {
 shell_config() {
   log "Shell startup files"
   # ~/.profile: login and non-interactive shells (ssh host cmd, cron) see mise tools.
-  write_block "$HOME/.profile" 'export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"'
+  # Projects in ~/code (and the agents' worktrees inside them) are trusted by mise,
+  # so a fresh worktree can run `just check` without a trust prompt.
+  write_block "$HOME/.profile" 'export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+export MISE_TRUSTED_CONFIG_PATHS="$HOME/code"'
   write_block "$HOME/.bashrc" 'export PATH="$HOME/.local/bin:$PATH"
+export MISE_TRUSTED_CONFIG_PATHS="$HOME/code"
 eval "$(mise activate bash)"
 eval "$(direnv hook bash)"
 # `dev`: a tmux session in your project that survives SSH drops. Run claude/codex in it.

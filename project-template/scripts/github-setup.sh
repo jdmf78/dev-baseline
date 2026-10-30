@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Apply baseline GitHub settings to a repo. Idempotent: re-run any time.
 #
-# Usage: scripts/github-setup.sh [--repo OWNER/NAME] [--webhook-url URL]
+# Usage: scripts/github-setup.sh [--repo OWNER/NAME] [--webhook-url URL] [--labels-only]
 #   --repo          defaults to the repo of the current directory
 #   --webhook-url   create or update a repo webhook pointing at your deployed
 #                   service (e.g. https://hooks.example.com/webhook); the
 #                   secret is WEBHOOK_SECRET from .env, generated if empty
+#   --labels-only   only create the labels the agent team uses
 # Needs gh (logged in as a repo admin, admin:repo_hook scope), jq and openssl.
 set -euo pipefail
 
-REPO="" WEBHOOK_URL=""
+REPO="" WEBHOOK_URL="" LABELS_ONLY=0
 EVENTS='["push","pull_request","issues"]'
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -19,12 +20,25 @@ while (($#)); do
   case $1 in
     --repo)        REPO=${2:?--repo needs OWNER/NAME}; shift 2 ;;
     --webhook-url) WEBHOOK_URL=${2:?--webhook-url needs a URL}; shift 2 ;;
-    -h|--help)     sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --labels-only) LABELS_ONLY=1; shift ;;
+    -h|--help)     awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *)             echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 [[ -n $REPO ]] || REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+log "Labels for the agent team"
+while IFS='|' read -r name color desc; do
+  gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" --force >/dev/null
+done <<'EOF'
+agent|5319e7|Work item or PR for the agent team
+agent:in-progress|fbca04|A developer agent is working on it
+agent:approved|0e8a16|Reviewer found no blocking issues
+agent:changes|d93f0b|Reviewer requested changes
+blocked|b60205|Needs a human decision
+EOF
+((LABELS_ONLY)) && exit 0
 
 log "Merge settings for $REPO: squash only, delete merged branches, allow auto-merge"
 gh api -X PATCH "repos/$REPO" --silent \
@@ -106,6 +120,7 @@ cat <<EOF
 Done for $REPO. One-time steps left:
   - Claude in GitHub: run /install-github-app inside Claude Code, or install
     https://github.com/apps/claude and run: gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo $REPO
+  - Claude review of every PR: gh variable set CLAUDE_REVIEW --body true --repo $REPO
   - Codex PR review (optional): gh secret set OPENAI_API_KEY --repo $REPO
                                 gh variable set CODEX_REVIEW --body true --repo $REPO
   - Deploys, once release.yml has a target: gh variable set DEPLOY_ENABLED --body true --repo $REPO

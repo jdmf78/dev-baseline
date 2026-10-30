@@ -7,8 +7,10 @@ fresh machine into a dev box for a GitHub repo you choose. It has two parts:
 - **`machine/`** runs once per server. It installs the toolchain (including
   Claude Code, Codex and the latest Python), hardens SSH, creates a per-machine
   GitHub key, signs you in, and clones your project.
-- **`project-template/`** seeds a new product repo. It brings CI, release, AI
-  review, a GitHub webhook receiver, deploy files, and the rules agents follow.
+- **`project-template/`** seeds a new product repo. It brings an autonomous
+  agent team (planner, developers, reviewer, documenter, with Claude Code and
+  Codex), CI, release, AI review, a GitHub webhook receiver, deploy files, and
+  the rules agents follow.
 
 The kit holds no secrets or personal details, so it can be public and any new
 machine can clone it.
@@ -22,11 +24,15 @@ machine/
   files/                default configs: Claude, Codex, tmux, git ignore
 project-template/
   AGENTS.md, CLAUDE.md  one set of instructions for Codex and Claude Code
-  .claude/settings.json shared permissions (allow `just`, deny .env reads)
+  docs/                 GOAL.md (what the team works toward), DECISIONS.md
+  .claude/agents/       team roles: planner, developer, reviewer, documenter
+  .claude/skills/       /goal and /next, the commands that run the team
+  .claude/settings.json permissions + hooks (session briefing, check gate)
   mise.toml, justfile   pinned tools + the single task interface (local = CI)
-  .github/workflows/    ci, release (GHCR image), claude (@claude), codex-review
+  .github/workflows/    ci, release (GHCR image), claude (@claude), claude-review, codex-review
   .github/dependabot.yml
-  scripts/              github-setup.sh (repo rules, webhook), webhook-redeliver.sh
+  scripts/              github-setup.sh (repo rules, labels, webhook), webhook-redeliver.sh
+  scripts/agent/        hooks, autopilot loop, Codex task and review helpers
   services/webhooks/    zero-dependency Node receiver with tests
   deploy/               Docker Compose + Caddy (automatic HTTPS)
   .devcontainer/        the same toolchain in Codespaces or any Docker host
@@ -42,11 +48,26 @@ yet; empty is fine:
 gh repo create you/your-app --private
 ```
 
-Then, on the new machine:
+Then, on the new machine, install the three tools the kit needs to get started
+(as root, which is the default in containers):
 
 ```bash
-git clone https://github.com/YOUR_USER/dev-baseline.git ~/dev-baseline
+apt update && apt install -y git gh curl
 ```
+
+As a regular user, the same with sudo:
+
+```bash
+sudo apt update && sudo apt install -y git gh curl
+```
+
+Fetch the kit:
+
+```bash
+git clone https://github.com/jdmf78/dev-baseline.git ~/dev-baseline
+```
+
+The bootstrap later swaps Ubuntu's `gh` package for GitHub's current release.
 
 ```bash
 ~/dev-baseline/install.sh --project you/your-app --harden --web
@@ -128,17 +149,86 @@ force-push or deletion. That ruleset applies to you and your agents alike.
 An existing project keeps its own files. Copy over the template pieces you
 want, such as `AGENTS.md`, `CLAUDE.md`, `.claude/settings.json` or the workflows.
 
-## 4. The daily loop
+## 4. The agent team: set a goal, it builds
+
+Projects made from the template come with a development team that works from
+a goal. All state lives in GitHub (a milestone, issues, PRs, labels), so
+Claude Code, Codex and you see the same board.
 
 ```
-dev (tmux) -> claude / codex on a branch -> just ci -> push -> PR
-  -> CI (lint, test, build) + optional @claude / Codex review
-  -> squash merge to main -> release.yml pushes ghcr.io/<you>/<repo>/webhooks
-  -> deploy job (off until you set DEPLOY_ENABLED)
+docs/GOAL.md -> planner -> milestone + issues (acceptance criteria, files, dependencies)
+                               |
+          developer         developer         Codex (just codex-task N)
+       (own worktree)    (own worktree)        (own worktree)
+               \               |               /
+                 -> pull requests, "Closes #N" <-
+                               |
+       reviewer (Claude) + Codex second opinion -> agent:approved / agent:changes
+                               |
+   CI must pass -> merge (you, or autopilot with AUTO_MERGE=1) -> release
+                               |
+             documenter updates the docs; the next wave starts
 ```
 
-`just` is the contract: CI runs `just ci`, agents are allowed `just *`, and you
-type the same commands. When the stack changes you edit recipes, not workflows.
+**Interactive**, so you can watch and steer: run `dev`, then `claude` in the
+project, and give it a goal:
+
+```
+/goal Build a REST API for invoices with auth, Postgres and an OpenAPI spec
+```
+
+It writes `docs/GOAL.md`, plans the issues, runs up to three developers in
+parallel, reviews every PR, and then lists the approved PRs for you to merge.
+Say "continue", or run `/next`, for the next wave.
+
+**Unattended**, inside `dev` so it survives SSH drops:
+
+```bash
+AUTO_MERGE=1 just autopilot 10
+```
+
+Each run is one headless wave: fix PRs the reviewer sent back, start developers
+on ready issues, review the new PRs. With `AUTO_MERGE=1` the loop then merges
+approved PRs once CI passes; without it they wait for you. It stops when the
+goal is done, a run fails, or after 10 runs. Limits: `AUTOPILOT_BUDGET_USD`
+(estimated spend per run, default 10) and `AUTOPILOT_PARALLEL` (developers per
+wave, default 3). Logs go to `.agent-logs/`.
+
+**Codex on the team**: `just codex-task 12` hands issue 12 to Codex in its own
+worktree and opens the PR. `just codex-review 34` gets Codex's review; the
+reviewer agent runs it on every PR. Codex reads the same `AGENTS.md`, so an
+interactive `codex` session can also be told to take the next ready issue.
+
+What keeps it honest:
+
+- **Session briefing**: a `SessionStart` hook gives every session the goal and
+  the open team issues and PRs.
+- **Check gate**: a `Stop` hook won't let an agent finish while its branch
+  fails `just check`; it gets the failure and keeps working.
+- **Merge gate**: agents can't merge. `gh pr merge` is denied, and Claude
+  Code's auto mode refuses unapproved merges anyway. Merging is you, or the
+  autopilot switch. The ruleset still requires the `ci` check.
+- **Unattended safety**: the loop runs Claude Code in auto mode, where a
+  classifier reviews each action, and with prompts off, so anything that would
+  need a human is refused instead of waiting.
+- **Stuck work** is labelled `blocked` with a comment saying what you must decide.
+
+Cost: every developer and reviewer is its own model session, so a wave of three
+developers plus reviews uses several times what one session does. Tune
+`AUTOPILOT_PARALLEL` and the budget to your plan's limits.
+
+**Agent teams (experimental)**: for discussion-heavy work in an interactive
+session, Claude Code can run a lead plus teammates that message each other, for
+example three reviewers on one PR, one each for security, performance and
+tests. Turn it on with `{"env": {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}}`
+in `.claude/settings.local.json`. It's off by default because teammates don't
+get their own worktrees, so parallel coding in one checkout would collide;
+`/goal` uses worktree subagents instead.
+
+By hand, the same pipeline applies: branch, `just check`, push, PR, CI and
+review, merge. `just` is the contract: CI runs `just ci`, agents are allowed
+`just *`, and you type the same commands. When the stack changes you edit
+recipes, not workflows.
 
 ## 5. Webhooks (GitHub events into your code)
 
@@ -188,6 +278,9 @@ personal token.
 - **Claude**: inside Claude Code in the repo, run `/install-github-app`. It installs
   the app and adds the secret. Then mention `@claude` in an issue or PR. Only
   owners, members and collaborators can trigger it.
+- **Claude review on every PR**: with the app installed,
+  `gh variable set CLAUDE_REVIEW --body true` turns on `claude-review.yml`,
+  which posts inline review comments on each new PR.
 - **Codex**: either enable Codex code review for the repo in Codex cloud, or use
   the bundled workflow: `gh secret set OPENAI_API_KEY`, then
   `gh variable set CODEX_REVIEW --body true`.

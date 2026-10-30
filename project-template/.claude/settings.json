@@ -7,21 +7,63 @@
       "Bash(git diff)",
       "Bash(git diff *)",
       "Bash(git log *)",
+      "Bash(git switch *)",
+      "Bash(git fetch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push -u origin *)",
+      "Bash(gh issue *)",
+      "Bash(gh label list *)",
+      "Bash(gh pr create *)",
       "Bash(gh pr view *)",
       "Bash(gh pr diff *)",
       "Bash(gh pr checks *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr edit *)",
+      "Bash(gh pr review *)",
+      "Bash(gh pr comment *)",
       "Bash(gh run list *)",
-      "Bash(gh run view *)"
+      "Bash(gh run view *)",
+      "Bash(gh api repos/{owner}/{repo}/milestones *)"
     ],
     "ask": [
       "Edit(./.github/workflows/**)",
-      "Edit(./scripts/github-setup.sh)"
+      "Edit(./scripts/github-setup.sh)",
+      "Edit(./scripts/agent/**)",
+      "Edit(./.claude/**)"
     ],
     "deny": [
       "Read(./.env)",
       "Edit(./.env)",
       "Bash(git push --force *)",
-      "Bash(git push -f *)"
+      "Bash(git push -f *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh repo delete *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/scripts/agent/context.sh\"", "timeout": 30 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/scripts/agent/stop-gate.sh\"", "timeout": 600 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "developer|documenter",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/scripts/agent/stop-gate.sh\"", "timeout": 600 }
+        ]
+      }
     ]
   }
 }
