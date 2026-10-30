@@ -21,7 +21,9 @@ package_upgrade: true
 packages: [git, curl]
 
 # Clones the kit and runs the unattended part; output goes to
-# /home/dev/bootstrap.log. Then SSH in as dev and run, in order:
+# /home/dev/bootstrap.log. It installs Claude Code, Codex and OpenCode; add
+# --agents claude (or codex,opencode, ...) to install fewer.
+# Then SSH in as dev and run, in order:
 #   ~/dev-baseline/machine/login.sh     (sign-ins and your project)
 #   exec bash -l                        (load the new shell setup)
 # Using a private fork of the kit? Delete runcmd, scp the kit over, run bootstrap.sh.

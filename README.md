@@ -1,9 +1,10 @@
 # dev-baseline
 
 One command turns an Ubuntu server or container into a complete development
-setup where Claude Code and Codex work like a full engineering team on your
-project. You set the goal; they plan it, build it in parallel, review it,
-test it and ship it as pull requests.
+setup where AI coding agents work like a full engineering team on your
+project: Claude Code, Codex and OpenCode, all three or the ones you pick. You
+set the goal; they plan it, build it in parallel, review it, test it and ship
+it as pull requests.
 
 ## Install
 
@@ -26,9 +27,13 @@ as in its address: `github.com/octocat/invoice-api` becomes
 `octocat/invoice-api`. If it doesn't exist yet, the installer creates it
 (private), and fills an empty one from the project template.
 
+It installs all three AI tools. To pick, add `--agents` with the ones you want,
+for example `--agents claude` or `--agents codex,opencode`.
+
 The installer runs on its own for a few minutes, then asks you to sign in to
-GitHub, Codex and Claude Code. Each shows a link and a code to approve on your
-phone or laptop. That's the only part that needs you. It ends in a fresh shell.
+GitHub and to each AI tool. Each shows a link and a code to approve on your
+phone or laptop; OpenCode first asks which model provider you use. That's the
+only part that needs you. It ends in a fresh shell.
 
 ## Use it
 
@@ -37,7 +42,7 @@ dev
 ```
 
 `dev` opens your project in a session that keeps running when you disconnect.
-Start Claude Code:
+Start your AI tool, `claude`, `codex` or `opencode`:
 
 ```bash
 claude
@@ -55,7 +60,8 @@ GSD turns your description into a roadmap of phases. Let the team build it:
 /gsd-autonomous
 ```
 
-Or unattended, for example overnight, merging the result once CI passes:
+Or unattended with Claude Code, for example overnight, merging the result
+once CI passes:
 
 ```bash
 AUTO_MERGE=1 just autopilot
@@ -64,8 +70,8 @@ AUTO_MERGE=1 just autopilot
 For anything else, ask in plain words: "add a Postgres database", "put it
 online", "set up the GitHub webhooks", "deploy it". The agents follow the
 playbooks in the project and only come back to you for what they can't do
-themselves, such as a sign-in or a DNS record. Codex works the same way: run
-`codex` in the project and use the same `/gsd-...` commands.
+themselves, such as a sign-in or a DNS record. Codex and OpenCode take the
+same `/gsd-...` commands.
 
 Another project on the same machine:
 
@@ -77,6 +83,7 @@ Another project on the same machine:
 
 | Option | Use it when |
 |---|---|
+| `--agents claude,codex,opencode` | You want fewer AI tools than all three. List the ones to install. Later runs keep your choice until you give a new list. |
 | `--domain dev.example.com` | Projects should be reachable on the web: sites, APIs, webhooks. First point a wildcard DNS record, `*.dev.example.com`, at this machine. Agents then publish each project at `NAME.dev.example.com` with HTTPS, without asking you. |
 | `--harden` | The machine is reachable from the internet: SSH keys only, firewall, fail2ban. Copy your laptop's key to it first (`ssh-copy-id root@your-server`); without a key there, password login stays on. Not needed for local containers. |
 | `--no-docker` | You don't want Docker. |
@@ -91,17 +98,17 @@ with a private noreply address.
 |---|---|
 | [GSD Core](https://github.com/open-gsd/gsd-core) | Plans and builds: goal → phases → parallel waves of agents → verified → pull request |
 | [gstack](https://github.com/garrytan/gstack) | Checks quality: code and design review, browser QA, security audits |
-| `machine/` | Installs Claude Code, Codex, GSD Core, gstack, Docker, gh, git, the latest Python, Node, Bun, just, tmux, screen and curl, then signs you in and clones your project |
+| `machine/` | Installs your pick of Claude Code, Codex and OpenCode, plus GSD Core, gstack, Docker, gh, git, the latest Python, Node, Bun, just, tmux, screen and curl, then signs you in and clones your project |
 | `project-template/` | What every new project starts with: rules for agents (`AGENTS.md`), playbooks so they set up Docker, websites, webhooks, deploys and GitHub settings on their own, CI/CD, branch protection, a webhook receiver, HTTPS through Caddy |
 
 The safeguards: `main` only accepts pull requests that pass CI, agents never
 merge (you do, or the autopilot when `AUTO_MERGE=1`), GSD verifies every
-phase, and Codex reviews Claude's code.
+phase, and Codex, when installed, reviews the code as a second opinion.
 
 ## Good to know
 
-- Run `install.sh` again any time. It skips what's done, and updates Claude
-  Code, Codex, GSD, gstack and Python.
+- Run `install.sh` again any time. It skips what's done, and updates the AI
+  tools, GSD, gstack and Python.
 - Works as root in LXC containers. Docker inside LXC needs nesting and keyctl
   enabled on the host (Proxmox: Options > Features).
 - Agents running as root can change anything in their container, so give each

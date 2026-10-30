@@ -3,7 +3,8 @@
 # the milestone is built and verified, then /gsd-ship opens the PR. Stops when
 # the PR exists, a run fails, or MAX_RUNS is reached. Run it inside `dev`
 # (tmux) so it survives SSH drops. Start the project first with
-# /gsd-new-project (or /gsd-new-milestone) in Claude Code or Codex.
+# /gsd-new-project (or /gsd-new-milestone) in Claude Code, Codex or OpenCode.
+# The unattended runs use Claude Code, so it must be installed.
 #
 # Usage: scripts/agent/autopilot.sh [MAX_RUNS]        (default 3)
 # Environment:
@@ -17,8 +18,13 @@ budget=${AUTOPILOT_BUDGET_USD:-25}
 config=.planning/config.json
 
 cd "$(git rev-parse --show-toplevel)"
+if ! command -v claude >/dev/null; then
+  echo "The autopilot runs on Claude Code, which isn't installed here." >&2
+  echo "Add it: ~/dev-baseline/machine/bootstrap.sh --agents claude,codex,opencode (list the ones you want)" >&2
+  exit 1
+fi
 if [[ ! -f $config ]]; then
-  echo "No GSD project here yet. In Claude Code, run /gsd-new-project first." >&2
+  echo "No GSD project here yet. In your AI tool, run /gsd-new-project first." >&2
   exit 1
 fi
 

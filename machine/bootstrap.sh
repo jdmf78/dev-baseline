@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Idempotent bootstrap for an Ubuntu (24.04+) dev server or container that runs
-# Claude Code and Codex. Run as root (the default in LXC containers) or as a
-# user with sudo. Safe to re-run: every step skips work that is already done.
+# AI coding agents: Claude Code, Codex and OpenCode, all or the ones you pick.
+# Run as root (the default in LXC containers) or as a user with sudo. Safe to
+# re-run: every step skips work that is already done.
 #
 # Usage: ./bootstrap.sh [options]
+#   --agents LIST         AI coding CLIs to install, comma-separated: claude, codex, opencode
+#                         (default: all three; a re-run keeps the previous choice)
 #   --project OWNER/REPO  your development repo; login.sh creates it if missing and clones it to ~/code/REPO
 #   --domain NAME         base domain whose wildcard DNS (*.NAME) points here; agents publish
 #                         projects as PROJECT.NAME over HTTPS (implies --web)
@@ -20,6 +23,11 @@ STATE="$HOME/.config/dev-baseline"
 MARK_BEGIN="# >>> dev-baseline >>>"
 MARK_END="# <<< dev-baseline <<<"
 PROJECT="" DOMAIN="" GIT_NAME="" GIT_EMAIL="" HARDEN=0 WEB=0 DOCKER=1 APT_UPDATED=0
+# The AI coding CLIs this kit can install. Each name is also GSD Core's --NAME
+# flag and gstack's --host NAME. To add one: list it here, write install_NAME
+# below and login_NAME in login.sh.
+KNOWN_AGENTS=(claude codex opencode)
+AGENTS_ARG=""
 USER=${USER:-$(id -un)} # containers often leave USER unset for root
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -34,6 +42,7 @@ systemd_running() { [[ -d /run/systemd/system ]]; }
 
 while (($#)); do
   case $1 in
+    --agents)    AGENTS_ARG=${2:?--agents needs a list like claude,codex}; shift 2 ;;
     --project)   PROJECT=${2:?--project needs OWNER/REPO}; shift 2 ;;
     --domain)    DOMAIN=${2:?--domain needs a name like dev.example.com}; WEB=1; shift 2 ;;
     --git-name)  GIT_NAME=${2:?--git-name needs a value}; shift 2 ;;
@@ -51,6 +60,18 @@ fi
 if [[ -n $DOMAIN && ! $DOMAIN =~ ^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$ ]]; then
   die "--domain must be a domain name like dev.example.com (got: $DOMAIN)"
 fi
+[[ -n $AGENTS_ARG ]] || AGENTS_ARG=$(cat "$STATE/agents" 2>/dev/null || echo "${KNOWN_AGENTS[*]}")
+IFS=', ' read -r -a picked <<<"$AGENTS_ARG"
+for agent in "${picked[@]}"; do
+  [[ -z $agent || " ${KNOWN_AGENTS[*]} " == *" $agent "* ]] ||
+    die "--agents takes any of: ${KNOWN_AGENTS[*]} (got: $agent)"
+done
+# Kept in the order above, so login.sh signs in to Claude Code before OpenCode.
+AGENTS=()
+for agent in "${KNOWN_AGENTS[@]}"; do
+  if [[ " ${picked[*]} " == *" $agent "* ]]; then AGENTS+=("$agent"); fi
+done
+((${#AGENTS[@]})) || die "--agents needs at least one of: ${KNOWN_AGENTS[*]}"
 
 apt_install() {
   local missing=() p
@@ -244,44 +265,64 @@ export MISE_TRUSTED_CONFIG_PATHS="$HOME/code"'
 export MISE_TRUSTED_CONFIG_PATHS="$HOME/code"
 eval "$(mise activate bash)"
 eval "$(direnv hook bash)"
-# `dev`: a tmux session in your project that survives SSH drops. Run claude/codex in it.
+# `dev`: a tmux session in your project that survives SSH drops. Run claude, codex or opencode in it.
 unalias dev 2>/dev/null || true
 dev() { tmux new-session -A -s dev -c "$(cat ~/.config/dev-baseline/project-dir 2>/dev/null || echo ~)"; }'
   install_if_absent "$FILES/tmux.conf" "$HOME/.tmux.conf"
 }
 
-ai_tools() {
-  log "Claude Code and Codex CLIs (installed, or updated to the latest release)"
-  local claude_bin
-  claude_bin=$(command -v claude || echo "$HOME/.local/bin/claude")
-  if [[ -x $claude_bin ]]; then
-    "$claude_bin" update >/dev/null 2>&1 || warn "claude update failed; keeping the installed version."
+# One installer per AI coding CLI: installs it, or updates it to the latest
+# release, and puts its default settings in place.
+install_claude() {
+  local bin
+  bin=$(command -v claude || echo "$HOME/.local/bin/claude")
+  if [[ -x $bin ]]; then
+    "$bin" update >/dev/null 2>&1 || warn "claude update failed; keeping the installed version."
   else
     curl -fsSL https://claude.ai/install.sh | bash
-    claude_bin="$HOME/.local/bin/claude"
+    bin="$HOME/.local/bin/claude"
   fi
-  # Codex is an npm package; mise supplies its Node and upgrades it on every run.
-  mise use --global --yes npm:@openai/codex@latest
-  echo "  claude $("$claude_bin" --version 2>/dev/null || echo 'not found')"
-  echo "  $(mise exec -- codex --version 2>/dev/null || echo 'codex not found')"
-  install -d -m 0700 "$HOME/.claude" "$HOME/.codex"
+  echo "  claude $("$bin" --version 2>/dev/null || echo 'not found')"
+  install -d -m 0700 "$HOME/.claude"
   install_if_absent "$FILES/claude-settings.json" "$HOME/.claude/settings.json"
+}
+
+# Codex and OpenCode are npm packages; mise supplies their Node and upgrades
+# them on every run.
+install_codex() {
+  mise use --global --yes npm:@openai/codex@latest
+  echo "  $(mise exec -- codex --version 2>/dev/null || echo 'codex not found')"
+  install -d -m 0700 "$HOME/.codex"
   install_if_absent "$FILES/codex-config.toml" "$HOME/.codex/config.toml"
 }
 
+# Its default config uses OpenCode 1's `permission` keys, which OpenCode 2 still
+# reads, because GSD Core adds its own entries in that form.
+install_opencode() {
+  mise use --global --yes npm:@opencode/cli@latest
+  echo "  opencode $(mise exec -- opencode --version 2>/dev/null || echo 'not found')"
+  mkdir -p "$HOME/.config/opencode"
+  install_if_absent "$FILES/opencode.json" "$HOME/.config/opencode/opencode.json"
+}
+
+ai_tools() {
+  log "AI coding CLIs: ${AGENTS[*]} (installed, or updated to the latest release)"
+  for agent in "${AGENTS[@]}"; do "install_$agent"; done
+}
+
 # The team: GSD Core plans and builds (goal -> phases -> parallel waves -> PR),
-# gstack checks quality (review, browser QA, security). Both install for Claude
-# Code and Codex, and re-running this updates them. Runs after ai_tools, so the
+# gstack checks quality (review, browser QA, security). Both install for every
+# chosen AI CLI, and re-running this updates them. Runs after ai_tools, so the
 # default settings exist before they add their hooks.
 agent_frameworks() {
-  log "GSD Core (planning and execution) for Claude Code and Codex"
-  local host gs="$HOME/.claude/skills/gstack"
-  for host in claude codex; do
-    mise exec -- npx -y @opengsd/gsd-core@latest "--$host" --global </dev/null ||
-      warn "GSD Core install for $host failed; re-run: npx @opengsd/gsd-core@latest --$host --global"
+  log "GSD Core (planning and execution) for: ${AGENTS[*]}"
+  local gs="$HOME/.claude/skills/gstack"
+  for agent in "${AGENTS[@]}"; do
+    mise exec -- npx -y @opengsd/gsd-core@latest "--$agent" --global </dev/null ||
+      warn "GSD Core install for $agent failed; re-run: npx @opengsd/gsd-core@latest --$agent --global"
   done
 
-  log "gstack (review, browser QA, security) for Claude Code and Codex"
+  log "gstack (review, browser QA, security) for: ${AGENTS[*]}"
   mise use --global --yes bun@latest
   # Chromium's system libraries, for gstack's browser QA on a headless server.
   as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
@@ -294,10 +335,11 @@ agent_frameworks() {
     mkdir -p "$(dirname "$gs")"
     git clone -q --single-branch --depth 1 https://github.com/garrytan/gstack.git "$gs"
   fi
-  (cd "$gs" && mise exec -- ./setup </dev/null) ||
-    warn "gstack setup failed; re-run: cd $gs && ./setup"
-  (cd "$gs" && mise exec -- ./setup --host codex </dev/null) ||
-    warn "gstack for Codex failed (experimental there); Claude Code is unaffected."
+  # Claude Code is gstack's main host; the others are experimental there.
+  for agent in "${AGENTS[@]}"; do
+    (cd "$gs" && mise exec -- ./setup --host "$agent" </dev/null) ||
+      warn "gstack setup for $agent failed; re-run: cd $gs && ./setup --host $agent"
+  done
 }
 
 harden_ssh() {
@@ -360,9 +402,10 @@ firewall() {
   warn "Docker-published ports bypass ufw. Bind app ports to 127.0.0.1 and publish only the proxy."
 }
 
-# Settings the sign-in step and the agents' playbooks read later.
+# Settings the sign-in step, later re-runs and the agents' playbooks read.
 record_settings() {
   mkdir -p "$STATE"
+  echo "${AGENTS[*]}" >"$STATE/agents"
   if [[ -n $PROJECT ]]; then
     echo "$PROJECT" >"$STATE/project"
     log "Project $PROJECT recorded; login.sh clones it once GitHub is signed in."
@@ -377,7 +420,7 @@ summary() {
   cat <<'EOF'
 
 Bootstrap complete. Next (install.sh does this for you):
-  machine/login.sh   sign in to GitHub, Codex and Claude Code, then set up your project.
+  machine/login.sh   sign in to GitHub and the AI tools, then set up your project.
 Afterwards, open a new shell (log out and back in) so the shell changes apply.
 EOF
 }

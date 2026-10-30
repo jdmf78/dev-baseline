@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Interactive sign-in, once per machine, after bootstrap.sh (install.sh runs
 # both): GitHub CLI, an anonymous git identity, this machine's SSH key,
-# gh-webhook, Codex and Claude Code. Then it clones and sets up your project.
+# gh-webhook, and each AI CLI that bootstrap.sh installed (Claude Code, Codex,
+# OpenCode). Then it clones and sets up your project.
 # Re-run with another --project to switch, or to add a second project.
 #
 # Usage: machine/login.sh [--project OWNER/REPO]
@@ -31,6 +32,58 @@ while (($#)); do
 done
 [[ -n $PROJECT ]] || PROJECT=$(cat "$STATE/project" 2>/dev/null || true)
 [[ -f $KEY ]] || { echo "Missing $KEY: run bootstrap.sh first." >&2; exit 1; }
+
+# The AI CLIs chosen with bootstrap.sh --agents; on older setups, the ones on PATH.
+AGENTS=()
+if [[ -s $STATE/agents ]]; then
+  read -r -a AGENTS <"$STATE/agents"
+else
+  for agent in claude codex opencode; do
+    if command -v "$agent" >/dev/null; then AGENTS+=("$agent"); fi
+  done
+fi
+
+login_claude() {
+  step "Claude Code: open the printed URL on your laptop, approve, paste the code back"
+  if claude auth status >/dev/null 2>&1; then
+    echo "Already logged in."
+  else
+    echo "(To bill an Anthropic Console API account instead of a subscription: claude auth login --console)"
+    claude auth login || echo "Claude login didn't finish; run: claude auth login" >&2
+  fi
+}
+
+login_codex() {
+  step "Codex: open the printed URL on any device and enter the code"
+  if codex login status >/dev/null 2>&1; then
+    echo "Already logged in."
+  elif ! codex login --device-auth; then
+    cat <<'EOF'
+Device-code login was refused. Either enable device code login for Codex in
+your ChatGPT security settings (a workspace admin controls this on business
+plans), or tunnel the browser callback from your laptop and log in normally:
+  ssh -L 1455:localhost:1455 <this-server>     then run: codex login
+EOF
+  fi
+}
+
+# OpenCode works with many model providers, so it asks which one to sign in to.
+login_opencode() {
+  local marker="$STATE/opencode-login"
+  step "OpenCode: pick a model provider, then follow its sign-in"
+  if [[ -f $marker ]]; then
+    echo "Already signed in. Add or switch providers with: opencode auth login"
+  else
+    if [[ " ${AGENTS[*]} " == *" claude "* ]]; then
+      echo "(Pick Claude Agent to reuse the Claude Code login from the step before.)"
+    fi
+    if opencode auth login; then
+      mkdir -p "$STATE" && touch "$marker"
+    else
+      echo "OpenCode login didn't finish; run: opencode auth login" >&2
+    fi
+  fi
+}
 
 # Create the project on GitHub if it's missing (after asking), clone it to
 # ~/code/NAME, install its tools, and make `dev` open there. An empty repo can
@@ -124,25 +177,14 @@ if [[ $out == *"successfully authenticated"* ]]; then echo "SSH to GitHub works.
 step "gh-webhook extension (forwards GitHub webhooks to a local port)"
 gh extension list | grep -q 'cli/gh-webhook' || gh extension install cli/gh-webhook
 
-step "Codex: open the printed URL on any device and enter the code"
-if codex login status >/dev/null 2>&1; then
-  echo "Already logged in."
-elif ! codex login --device-auth; then
-  cat <<'EOF'
-Device-code login was refused. Either enable device code login for Codex in
-your ChatGPT security settings (a workspace admin controls this on business
-plans), or tunnel the browser callback from your laptop and log in normally:
-  ssh -L 1455:localhost:1455 <this-server>     then run: codex login
-EOF
-fi
-
-step "Claude Code: open the printed URL on your laptop, approve, paste the code back"
-if claude auth status >/dev/null 2>&1; then
-  echo "Already logged in."
-else
-  echo "(To bill an Anthropic Console API account instead of a subscription: claude auth login --console)"
-  claude auth login || echo "Claude login didn't finish; run: claude auth login" >&2
-fi
+# Claude Code first, so OpenCode can reuse its login.
+for agent in "${AGENTS[@]}"; do
+  if command -v "$agent" >/dev/null && declare -F "login_$agent" >/dev/null; then
+    "login_$agent"
+  else
+    step "$agent isn't installed; re-run: ~/dev-baseline/machine/bootstrap.sh"
+  fi
+done
 
 if [[ -n $PROJECT ]]; then
   setup_project
@@ -152,9 +194,12 @@ else
 fi
 
 step "Ready"
-cat <<'EOF'
-  dev      session in your project that keeps running when you disconnect
-  claude   then /gsd-new-project to give the team a goal, /gsd-autonomous to build it
-  codex    the same GSD commands work in Codex
-(If `dev` isn't found, open a new shell first: exec bash -l)
+tools="${AGENTS[*]}"
+tools=${tools// /, }
+[[ $tools != *", "* ]] || tools="${tools%, *} or ${tools##*, }"
+cat <<EOF
+  dev    session in your project that keeps running when you disconnect
+  then   start ${tools:-your AI tool} in it, give the team a goal with /gsd-new-project,
+         and build it with /gsd-autonomous
+(If \`dev\` isn't found, open a new shell first: exec bash -l)
 EOF

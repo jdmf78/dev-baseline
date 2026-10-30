@@ -6,6 +6,7 @@
       "Read(~/.config/gh/**)",
       "Read(~/.claude/.credentials.json)",
       "Read(~/.codex/auth.json)",
+      "Read(~/.local/share/opencode/**)",
       "Read(**/.env)",
       "Bash(sudo *)",
       "Bash(git push --force *)",

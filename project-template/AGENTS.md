@@ -1,7 +1,7 @@
 # AGENTS.md
 
-How work gets done in this repo, for Codex, Claude Code (through CLAUDE.md)
-and humans. Agents load this on every run, so it stays short.
+How work gets done in this repo, for Claude Code (through CLAUDE.md), Codex,
+OpenCode and humans. Agents load this on every run, so it stays short.
 
 ## The team
 
@@ -9,10 +9,11 @@ and humans. Agents load this on every run, so it stays short.
   is discussed, planned, executed in parallel waves, verified, and shipped.
 - **gstack** checks quality: product and design reviews, QA in a real browser,
   security audits.
-- **Codex** works with the same GSD commands and reviews Claude's work as a
+- **Claude Code, Codex and OpenCode**: whichever are installed here run the
+  same GSD and gstack commands. With Codex installed, it reviews the work as a
   second opinion.
 
-Both tools are installed on this machine for Claude Code and Codex.
+GSD and gstack are installed for each of these AI tools on this machine.
 
 ## The flow
 
@@ -20,7 +21,8 @@ Both tools are installed on this machine for Claude Code and Codex.
    existing one.
 2. **Build**: `/gsd-autonomous` runs every phase; `/gsd-plan-phase N` and
    `/gsd-execute-phase N` run one at a time. `/gsd-progress` shows where things are.
-3. **Before shipping**: `/gsd-code-review N --fix --auto --codex`; gstack `/qa`
+3. **Before shipping**: `/gsd-code-review N --fix --auto` (add `--codex` when
+   Codex is installed); gstack `/qa`
    when there's a UI or an HTTP API; gstack `/cso` when auth, payments, secrets
    or public endpoints change; `just check` passes.
 4. **Ship**: `/gsd-ship` opens the PR from the `gsd/...` branch. Add the
