@@ -17,10 +17,15 @@ only with `~/dev-baseline/machine/runner.sh`:
   repeat; it repairs what's missing and takes over a `./run.sh` started by hand.
 - `--remove`: disconnects it from its repo; it stays installed and ready.
 - One runner serves one repo. To switch, `--remove`, then connect again.
+- Runners for further repos (or an organization) may run next to it, in
+  `/home/runner/actions-runner-OWNER-REPO`, each its own service; the user
+  adds them with `~/dev-baseline/docs/runner.md`.
+  `systemctl list-units 'actions.runner.*'` lists every runner here.
 - Logs: `journalctl -u 'actions.runner.*'`, plus `_diag/` in its folder.
 - Jobs reach it with `runs-on: self-hosted`. Workflows from the dev-baseline
   project template read the repo variable `RUNS_ON` instead, which
   connecting sets.
-- Don't run `config.sh`, `run.sh` or `svc.sh` yourself, and don't install
-  another runner elsewhere. Self-hosted runners belong on private repos;
-  connecting one to a public repo is the user's call.
+- Don't run `config.sh`, `run.sh` or `svc.sh` yourself, and don't add
+  runners yourself; when another repo needs one, point the user to that
+  guide. Self-hosted runners belong on private repos; connecting one to a
+  public repo is the user's call.

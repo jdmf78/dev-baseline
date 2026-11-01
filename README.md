@@ -121,6 +121,10 @@ To set it all up by hand instead, as root, with placeholders for your
 repository and token, from the user to a service that starts at boot, follow
 [docs/runner.md](docs/runner.md).
 
+A runner serves one repository, but the same machine can run one for each of
+your repositories, each with its own token, folder and service; see
+[More repositories](docs/runner.md#more-repositories).
+
 The installer creates the user. By hand, as root, that's:
 
 ```bash

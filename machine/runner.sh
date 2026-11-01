@@ -321,7 +321,7 @@ esac
 [[ $PROJECT =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--project must look like OWNER/REPO (got: $PROJECT)"
 current=$(connected_repo)
 if [[ -n $current && $(lower "$current") != "$(lower "$PROJECT")" ]]; then
-  die "This machine's runner serves $current, and one runner serves one repo. Keep it: runner.sh --project $current. Switch: runner.sh --remove, then connect again."
+  die "This machine's runner serves $current, and one runner serves one repo. Keep it: runner.sh --project $current. Switch: runner.sh --remove, then connect again. A runner for $PROJECT as well: ~/dev-baseline/docs/runner.md, More repositories."
 fi
 need_github
 [[ -n $current ]] || check_public
