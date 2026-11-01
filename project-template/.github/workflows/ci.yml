@@ -1,5 +1,7 @@
 name: CI
 
+# Jobs run on GitHub's machines, or on your own server once it's a self-hosted
+# runner: ~/dev-baseline/machine/runner.sh sets the repo variable RUNS_ON.
 on:
   pull_request:
   push:
@@ -15,7 +17,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,7 +28,7 @@ jobs:
       - run: just lint
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,7 +38,7 @@ jobs:
       - run: just test
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,7 +52,7 @@ jobs:
   ci:
     if: always()
     needs: [lint, test, build]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 2
     steps:
       - name: Fail if a required job failed

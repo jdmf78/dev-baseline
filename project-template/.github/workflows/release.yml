@@ -18,7 +18,7 @@ concurrency:
 jobs:
   image:
     name: Build and push image
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 20
     permissions:
       contents: read
@@ -63,7 +63,7 @@ jobs:
     needs: image
     # Off until you choose a target: gh variable set DEPLOY_ENABLED --body true
     if: vars.DEPLOY_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}
     timeout-minutes: 15
     environment: production
     concurrency:
@@ -79,5 +79,7 @@ jobs:
           # Replace with your target. Docker on your own server, for example
           # (SSH key and host key as environment secrets):
           #   ssh deploy@server "cd ~/app && IMAGE=$IMAGE@$DIGEST just up"
+          # With a self-hosted runner on that server (RUNS_ON, see ci.yml),
+          # this job already runs there and needs no SSH.
           # A managed PaaS: call its CLI or API with the image reference.
           echo "::warning::No deploy target configured yet"

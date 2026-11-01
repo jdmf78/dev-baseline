@@ -84,6 +84,7 @@ Another project on the same machine:
 | Option | Use it when |
 |---|---|
 | `--agents claude,codex,opencode` | You want fewer AI tools than all three. List the ones to install. Later runs keep your choice until you give a new list. |
+| `--runner` | Your project's GitHub Actions jobs (CI, deploys) should run on this machine instead of GitHub's. It becomes a self-hosted runner, running as its own `runner` user. Later: `~/dev-baseline/machine/runner.sh`. |
 | `--domain dev.example.com` | Projects should be reachable on the web: sites, APIs, webhooks. First point a wildcard DNS record, `*.dev.example.com`, at this machine. Agents then publish each project at `NAME.dev.example.com` with HTTPS, without asking you. |
 | `--harden` | The machine is reachable from the internet: SSH keys only, firewall, fail2ban. Copy your laptop's key to it first (`ssh-copy-id root@your-server`); without a key there, password login stays on. Not needed for local containers. |
 | `--no-docker` | You don't want Docker. |
@@ -98,7 +99,7 @@ with a private noreply address.
 |---|---|
 | [GSD Core](https://github.com/open-gsd/gsd-core) | Plans and builds: goal → phases → parallel waves of agents → verified → pull request |
 | [gstack](https://github.com/garrytan/gstack) | Checks quality: code and design review, browser QA, security audits |
-| `machine/` | Installs your pick of Claude Code, Codex and OpenCode, plus GSD Core, gstack, Docker, gh, git, the latest Python, Node, Bun, just, tmux, screen and curl, then signs you in and clones your project |
+| `machine/` | Installs your pick of Claude Code, Codex and OpenCode, plus GSD Core, gstack, Docker, gh, git, the latest Python, Node, Bun, just, tmux, screen and curl, then signs you in and clones your project; optionally a GitHub Actions runner |
 | `project-template/` | What every new project starts with: rules for agents (`AGENTS.md`), playbooks so they set up Docker, websites, webhooks, deploys and GitHub settings on their own, CI/CD, branch protection, a webhook receiver, HTTPS through Caddy |
 
 The safeguards: `main` only accepts pull requests that pass CI, agents never
@@ -113,6 +114,11 @@ phase, and Codex, when installed, reviews the code as a second opinion.
   enabled on the host (Proxmox: Options > Features).
 - Agents running as root can change anything in their container, so give each
   project its own disposable container.
+- GitHub's runner refuses root: `./config.sh` stops with "Must not run with
+  sudo". `--runner` avoids that with a `runner` user that has Docker and sudo,
+  like GitHub's own runners. To run one as root by hand anyway, set
+  `export RUNNER_ALLOW_RUNASROOT=1` first. Self-hosted runners belong on
+  private repos; on a public one, `--runner` asks first.
 - On GitHub's free plan, private repos can't have branch protection. Use GitHub
   Pro or a public repo before turning on `AUTO_MERGE`.
 - Every parallel agent is its own AI session, so cost grows with parallelism.
