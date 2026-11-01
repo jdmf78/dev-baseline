@@ -117,6 +117,10 @@ service. `~/dev-baseline/machine/runner.sh --status` shows how it's doing.
 Self-hosted runners belong on private repos; on a public one, `--runner`
 asks first.
 
+To set it all up by hand instead, as root, with placeholders for your
+repository and token, from the user to a service that starts at boot, follow
+[docs/runner.md](docs/runner.md).
+
 The installer creates the user. By hand, as root, that's:
 
 ```bash
