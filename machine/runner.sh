@@ -1,27 +1,35 @@
 #!/usr/bin/env bash
-# Makes this machine a GitHub Actions self-hosted runner for your project, so
-# its workflow jobs (CI, image builds, deploys) run here instead of on GitHub's
-# machines. Run it after login.sh, or use install.sh --runner. Safe to re-run:
-# it repairs what's missing and leaves a working runner alone.
+# The GitHub Actions self-hosted runner, in the same place on every machine:
+# /home/runner/actions-runner, run by the user `runner`. bootstrap.sh installs
+# it ready to use (--prepare) but connected to no repo. Running this script
+# connects it to your project, so the project's workflow jobs (CI, image
+# builds, deploys) run here, and keeps it running as a systemd service. Safe
+# to re-run: it repairs what's missing and leaves a working runner alone.
 #
 # GitHub's runner won't run as root ("Must not run with sudo") unless
-# RUNNER_ALLOW_RUNASROOT=1 is set. This script runs it as its own user,
-# `runner`, as a systemd service, with Docker and passwordless sudo like
-# GitHub's own runners. A runner already set up by hand in that user's home
-# (such as /home/runner/actions-runner) is kept and turned into the service.
-# Then it sets the repo variable RUNS_ON=self-hosted, which the project
-# template's workflows read to send their jobs here.
+# RUNNER_ALLOW_RUNASROOT=1 is set. Instead, `runner` has Docker and
+# passwordless sudo, like GitHub's own runners. One runner serves one repo.
+# Connecting also sets the repo variable RUNS_ON=self-hosted, which the
+# project template's workflows read to send their jobs here.
 #
-# Usage: machine/runner.sh [--project OWNER/REPO] [--status | --remove]
-#   --project OWNER/REPO   defaults to your project (login.sh --project)
-#   --status               show whether the runner is online and how it runs
-#   --remove               unregister this machine's runner and delete it
+# Usage: machine/runner.sh [--project OWNER/REPO | --prepare | --status | --remove]
+#   --project OWNER/REPO   repo to connect to (default: your project, from login.sh)
+#   --prepare              install or update it without a repo (bootstrap.sh runs this)
+#   --status               its repo, whether it's online, how it runs, where its logs are
+#   --remove               disconnect it from its repo; it stays installed and ready
 set -euo pipefail
 
 STATE="$HOME/.config/dev-baseline"
 RUNNER_USER=runner
-PROJECT="" REMOVE=0 STATUS=0 RESTART=0 RUNNER_HOME="" DIR=""
-RUN_AS=()
+RUNNER_HOME=/home/runner
+DIR=$RUNNER_HOME/actions-runner
+SESSION=actions-runner
+MODE=connect PROJECT="" PRIVATE="" RESTART=0
+NAME=$(hostname -s)
+# As the runner user, in its folder, with a clean environment: config.sh
+# records PATH and a few variables as the starting point of every job.
+RUN_AS=(runuser -u "$RUNNER_USER" -- env -i -C "$DIR" HOME="$RUNNER_HOME" USER="$RUNNER_USER"
+  LANG=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
@@ -30,51 +38,50 @@ usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' 
 yes_no() { local ans; read -r -p "$1 [y/N] " ans || ans=n; [[ $ans == [Yy]* ]]; }
 as_root() { if ((EUID == 0)); then "$@"; else sudo "$@"; fi; }
 systemd_running() { [[ -d /run/systemd/system ]]; }
+lower() { tr '[:upper:]' '[:lower:]' <<<"$1"; }
 
 while (($#)); do
   case $1 in
     --project) PROJECT=${2:?--project needs OWNER/REPO}; shift 2 ;;
-    --remove)  REMOVE=1; shift ;;
-    --status)  STATUS=1; shift ;;
+    --prepare) MODE=prepare; shift ;;
+    --status)  MODE=status; shift ;;
+    --remove)  MODE=remove; shift ;;
     -h|--help) usage; exit 0 ;;
     *)         usage; die "unknown option: $1" ;;
   esac
 done
-[[ -n $PROJECT ]] || PROJECT=$(cat "$STATE/project" 2>/dev/null || true)
-[[ -n $PROJECT ]] || die "No project set: run with --project OWNER/REPO"
-[[ $PROJECT =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--project must look like OWNER/REPO (got: $PROJECT)"
-gh auth status >/dev/null 2>&1 || die "Sign in to GitHub first: ~/dev-baseline/machine/login.sh"
-read -r PRIVATE ADMIN < <(gh api "repos/$PROJECT" --jq '"\(.private) \(.permissions.admin)"' 2>/dev/null) || true
-[[ ${ADMIN:-} == true ]] ||
-  die "Adding a runner needs admin rights on $PROJECT, which this GitHub login doesn't have (or it can't see the repo)."
-NAME=$(hostname -s)
-SESSION="runner-${PROJECT##*/}"
 
-set_dir() {
-  local found name
-  RUNNER_HOME=$(getent passwd "$RUNNER_USER" | cut -d: -f6)
-  DIR="$RUNNER_HOME/actions-runner/${PROJECT/\//-}"
-  # Keep a runner for this repo that's already set up in the runner's home,
-  # for example by hand in ~runner/actions-runner, under its own name.
-  found=$(as_root find "$RUNNER_HOME" -maxdepth 3 -name .runner -exec grep -liE \
-    "\"gitHubUrl\": *\"https://github.com/${PROJECT//./\\.}/?\"" {} + 2>/dev/null | head -n 1) || true
-  if [[ -n $found ]]; then
-    DIR=${found%/.runner}
-    name=$(as_root grep -oiE '"agentName": *"[^"]*"' "$found" | cut -d'"' -f4) || true
-    NAME=${name:-$NAME}
-  fi
-  # As the runner user, in its folder, with a clean environment: config.sh
-  # records PATH and a few variables as the starting point of every job.
-  RUN_AS=(runuser -u "$RUNNER_USER" -- env -i -C "$DIR" HOME="$RUNNER_HOME" USER="$RUNNER_USER"
-    LANG=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
-}
 as_runner() { as_root "${RUN_AS[@]}" "$@"; }
 # The runner's home isn't readable by other users, so check its files as root.
 has() { as_root test -e "$DIR/$1"; }
 # svc.sh (written by config.sh) manages the runner's systemd unit.
 svc() { (cd "$DIR" && as_root ./svc.sh "$@" >/dev/null); }
 
-# This machine's runner on GitHub: online, offline, or empty if not registered.
+# A value from .runner, which config.sh writes when it connects to a repo.
+setting() { as_root grep -oiE "\"$1\": *\"[^\"]*\"" "$DIR/.runner" 2>/dev/null | cut -d'"' -f4; }
+# Its name on GitHub, once connected.
+runner_name() {
+  local name
+  name=$(setting agentName) || true
+  NAME=${name:-$NAME}
+}
+connected_repo() {
+  local url
+  url=$(setting gitHubUrl) || true
+  url=${url#https://github.com/}
+  echo "${url%/}"
+}
+
+# The GitHub login must be able to manage the repo's runners (admin rights).
+need_github() {
+  local admin
+  gh auth status >/dev/null 2>&1 || die "Sign in to GitHub first: ~/dev-baseline/machine/login.sh"
+  read -r PRIVATE admin < <(gh api "repos/$PROJECT" --jq '"\(.private) \(.permissions.admin)"' 2>/dev/null) || true
+  [[ ${admin:-} == true ]] ||
+    die "Managing runners for $PROJECT needs admin rights there, which this GitHub login doesn't have (or it can't see the repo)."
+}
+
+# This runner on GitHub: online, offline, or empty if it isn't registered.
 runner_status() {
   gh api --paginate "repos/$PROJECT/actions/runners" --jq ".runners[] | select(.name == \"$NAME\") | .status"
 }
@@ -103,7 +110,7 @@ check_public() {
   [[ $PRIVATE == false ]] || return 0
   warn "$PROJECT is public. GitHub advises self-hosted runners for private repos only: a pull"
   warn "request from anyone's fork can change a workflow and run its own code on this machine."
-  yes_no "Add the runner anyway, with outside contributors' workflow runs waiting for your approval?" ||
+  yes_no "Connect the runner anyway, with outside contributors' workflow runs waiting for your approval?" ||
     die "Stopped; nothing was changed."
   gh api -X PUT "repos/$PROJECT/actions/permissions/fork-pr-contributor-approval" \
     -f approval_policy=all_external_contributors >/dev/null ||
@@ -111,9 +118,8 @@ check_public() {
 }
 
 runner_user() {
-  log "User $RUNNER_USER (GitHub's runner won't run as root)"
-  id "$RUNNER_USER" >/dev/null 2>&1 || as_root useradd --create-home --shell /bin/bash "$RUNNER_USER"
-  set_dir
+  id "$RUNNER_USER" >/dev/null 2>&1 ||
+    as_root useradd --create-home --home-dir "$RUNNER_HOME" --shell /bin/bash "$RUNNER_USER"
   # Docker and passwordless sudo, as on GitHub's runners, so workflows run
   # unchanged. Both are root-equivalent: keep one project per container.
   if getent group docker >/dev/null && ! id -nG "$RUNNER_USER" | grep -qw docker; then
@@ -132,42 +138,84 @@ runner_user() {
   fi
 }
 
-# Download once, checked against GitHub's published checksum; after that the
-# runner updates itself.
-download_runner() {
+# Earlier versions of this script kept runners in actions-runner/OWNER-REPO.
+# Move such a runner up into the fixed place.
+move_old_layout() {
+  local old
   has config.sh && return 0
-  local arch tag file sum tmp
+  old=$(as_root find "$DIR" -mindepth 2 -maxdepth 2 -name .runner 2>/dev/null) || true
+  [[ -n $old ]] || return 0
+  [[ $old != *$'\n'* ]] ||
+    die "Several runners are in $DIR/*/. Move the one to keep to $DIR, remove the others under Settings > Actions > Runners, then re-run."
+  old=${old%/.runner}
+  log "Moving the runner in $old to $DIR"
+  if as_root test -e "$old/.service"; then (cd "$old" && as_root ./svc.sh uninstall >/dev/null) || true; fi
+  as_root mv "$old" "$DIR.new"
+  as_root rm -rf "$DIR"
+  as_root mv "$DIR.new" "$DIR"
+  if systemd_running; then svc install "$RUNNER_USER" && svc start; fi
+}
+
+# The latest release, checked against GitHub's published checksum. A connected
+# runner updates itself; one that isn't yet is refreshed here on every run.
+download_runner() {
+  local arch release tag file sum tmp installed
+  if has .runner; then return 0; fi
   case $(dpkg --print-architecture) in
     amd64) arch=x64 ;;
     arm64) arch=arm64 ;;
     armhf) arch=arm ;;
     *)     die "GitHub's runner isn't built for $(dpkg --print-architecture)." ;;
   esac
-  tag=$(gh api repos/actions/runner/releases/latest --jq .tag_name)
+  # Before sign-in (bootstrap), GitHub's API answers without a login too.
+  release=$(gh api repos/actions/runner/releases/latest 2>/dev/null ||
+    curl -fsSL https://api.github.com/repos/actions/runner/releases/latest) ||
+    die "Couldn't reach GitHub for the runner's latest release."
+  tag=$(jq -r .tag_name <<<"$release")
+  if has config.sh; then
+    installed=$(as_runner ./bin/Runner.Listener --version 2>/dev/null) || true
+    if [[ $installed == "${tag#v}" ]]; then
+      echo "  runner $installed, not connected to a repo yet"
+      return 0
+    fi
+  fi
   file="actions-runner-linux-$arch-${tag#v}.tar.gz"
-  sum=$(gh api "repos/actions/runner/releases/tags/$tag" --jq ".assets[] | select(.name == \"$file\") | .digest")
+  sum=$(jq -r --arg f "$file" '.assets[] | select(.name == $f) | .digest' <<<"$release")
   [[ $sum == sha256:* ]] || die "GitHub lists no checksum for $file; not installing it."
-  log "GitHub Actions runner $tag ($arch) in $DIR"
   tmp=$(mktemp)
   curl -fsSL "https://github.com/actions/runner/releases/download/$tag/$file" -o "$tmp"
   echo "${sum#sha256:}  $tmp" | sha256sum -c --quiet - || { rm -f "$tmp"; die "$file doesn't match its checksum."; }
+  as_root rm -rf "$DIR"
   as_root install -d -o "$RUNNER_USER" -g "$RUNNER_USER" "$DIR"
   as_root tar -xzf "$tmp" -C "$DIR"
   as_root chown -R "$RUNNER_USER:$RUNNER_USER" "$DIR"
   rm -f "$tmp"
   # The libraries it needs: ICU, Kerberos, OpenSSL, LTTng.
   (cd "$DIR" && as_root ./bin/installdependencies.sh >/dev/null) ||
-    warn "Some of the runner's libraries didn't install; config.sh below names what's missing."
+    warn "Some of the runner's libraries didn't install; connecting names what's missing."
+  echo "  runner ${tag#v} installed, not connected to a repo yet"
 }
 
-register_runner() {
+prepare_runner() {
+  log "GitHub Actions runner in $DIR, run by user $RUNNER_USER"
+  runner_user
+  move_old_layout
+  download_runner
+  # New group memberships reach a running service only after a restart.
+  if ((RESTART)) && has .service; then
+    as_root systemctl restart "$(as_root cat "$DIR/.service")" 2>/dev/null || true
+  fi
+}
+
+connect_runner() {
   if has .runner; then
+    runner_name
     [[ -z $(runner_status) ]] || return 0
-    warn "Runner $NAME was removed on GitHub; registering it again."
+    warn "Runner $NAME was removed on GitHub; connecting it again."
     stop_runner
     as_root rm -f "$DIR/.runner" "$DIR/.credentials" "$DIR/.credentials_rsaparams"
   fi
-  log "Registering runner $NAME for $PROJECT"
+  log "Connecting runner $NAME to $PROJECT"
   local token
   # The token expires within an hour and can only register runners. --replace
   # takes over a runner of the same name left by an earlier install.
@@ -184,11 +232,7 @@ start_runner() {
       svc install "$RUNNER_USER"
     else
       unit=$(as_root cat "$DIR/.service")
-      if ! as_root systemctl is-active --quiet "$unit"; then
-        stop_by_hand
-      elif ((RESTART)); then
-        as_root systemctl restart "$unit"
-      fi
+      as_root systemctl is-active --quiet "$unit" || stop_by_hand
     fi
     svc start
   else
@@ -210,6 +254,15 @@ start_runner() {
 # Exits non-zero unless GitHub sees the runner online.
 show_status() {
   local github how logs="$DIR/_diag/"
+  has config.sh || die "No runner installed in $DIR. Install it: ~/dev-baseline/machine/runner.sh --prepare"
+  PROJECT=$(connected_repo)
+  if [[ -z $PROJECT ]]; then
+    echo "Runner installed in $DIR, ready, but not connected to a repo."
+    echo "Connect it: ~/dev-baseline/machine/runner.sh --project OWNER/REPO"
+    return 1
+  fi
+  runner_name
+  need_github
   github=$(gh api --paginate "repos/$PROJECT/actions/runners" --jq ".runners[] | select(.name == \"$NAME\")
     | .status + (if .busy then \", running a job\" else \"\" end)")
   if has .service; then
@@ -233,38 +286,47 @@ EOF
   [[ $github == online* ]]
 }
 
+# Unregister it; the installed runner stays, ready to connect again.
 remove_runner() {
-  { id "$RUNNER_USER" >/dev/null 2>&1 && set_dir && as_root test -d "$DIR"; } ||
-    die "There's no runner for $PROJECT on this machine."
-  log "Removing runner $NAME from $PROJECT"
-  stop_runner
-  if has .runner; then
-    local token
-    token=$(gh api -X POST "repos/$PROJECT/actions/runners/remove-token" --jq .token)
-    as_runner ./config.sh remove --token "$token" ||
-      warn "Couldn't unregister it; delete $NAME under Settings > Actions > Runners."
+  local token
+  PROJECT=$(connected_repo)
+  if [[ -z $PROJECT ]]; then
+    echo "The runner in $DIR isn't connected to a repo; nothing to remove."
+    return 0
   fi
-  as_root rm -rf "$DIR"
+  runner_name
+  need_github
+  log "Disconnecting runner $NAME from $PROJECT"
+  stop_runner
+  token=$(gh api -X POST "repos/$PROJECT/actions/runners/remove-token" --jq .token)
+  if ! as_runner ./config.sh remove --token "$token"; then
+    warn "Couldn't unregister it on GitHub; delete $NAME under Settings > Actions > Runners."
+    as_root rm -f "$DIR/.runner" "$DIR/.credentials" "$DIR/.credentials_rsaparams"
+  fi
   if [[ $(gh api "repos/$PROJECT/actions/runners" --jq .total_count) == 0 ]]; then
     gh variable delete RUNS_ON --repo "$PROJECT" >/dev/null 2>&1 || true
     echo "No runners left for $PROJECT, so its jobs run on GitHub's machines again."
   fi
+  echo "The runner stays installed in $DIR. Connect it again: ~/dev-baseline/machine/runner.sh --project OWNER/REPO"
 }
 
-if ((REMOVE)); then
-  remove_runner
-  exit 0
+case $MODE in
+  prepare) prepare_runner; exit 0 ;;
+  status)  show_status; exit ;;
+  remove)  remove_runner; exit 0 ;;
+esac
+
+[[ -n $PROJECT ]] || PROJECT=$(cat "$STATE/project" 2>/dev/null || true)
+[[ -n $PROJECT ]] || die "No project set: run with --project OWNER/REPO"
+[[ $PROJECT =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--project must look like OWNER/REPO (got: $PROJECT)"
+current=$(connected_repo)
+if [[ -n $current && $(lower "$current") != "$(lower "$PROJECT")" ]]; then
+  die "This machine's runner serves $current, and one runner serves one repo. Keep it: runner.sh --project $current. Switch: runner.sh --remove, then connect again."
 fi
-if ((STATUS)); then
-  { id "$RUNNER_USER" >/dev/null 2>&1 && set_dir && has .runner; } ||
-    die "No runner for $PROJECT on this machine. Set one up: ~/dev-baseline/machine/runner.sh"
-  show_status
-  exit
-fi
-check_public
-runner_user
-download_runner
-register_runner
+need_github
+[[ -n $current ]] || check_public
+prepare_runner
+connect_runner
 start_runner
 log "Sending the project's jobs here: repo variable RUNS_ON=self-hosted"
 gh variable set RUNS_ON --body self-hosted --repo "$PROJECT"
@@ -277,5 +339,5 @@ Runner $NAME works for $PROJECT (GitHub: Settings > Actions > Runners).
   Runs   as user $RUNNER_USER, from $DIR
   Check  ~/dev-baseline/machine/runner.sh --status     (online? service? where the logs are)
   Undo   gh variable delete RUNS_ON --repo $PROJECT   (jobs back to GitHub's machines)
-         ~/dev-baseline/machine/runner.sh --remove     (remove the runner as well)
+         ~/dev-baseline/machine/runner.sh --remove     (disconnect it; it stays installed)
 EOF

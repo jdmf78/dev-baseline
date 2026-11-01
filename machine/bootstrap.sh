@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent bootstrap for an Ubuntu (24.04+) dev server or container that runs
-# AI coding agents: Claude Code, Codex and OpenCode, all or the ones you pick.
+# AI coding agents: Claude Code, Codex and OpenCode, all or the ones you pick,
+# plus a GitHub Actions runner, ready to connect to a repo with runner.sh.
 # Run as root (the default in LXC containers) or as a user with sudo. Safe to
 # re-run: every step skips work that is already done.
 #
@@ -354,6 +355,14 @@ agent_frameworks() {
   done
 }
 
+# The GitHub Actions runner, in /home/runner/actions-runner on every machine:
+# installed and ready, but connected to no repo until runner.sh runs
+# (install.sh --runner does that). Re-running this updates it until then.
+actions_runner() {
+  "${FILES%/files}/runner.sh" --prepare ||
+    warn "The GitHub Actions runner didn't install; re-run: ~/dev-baseline/machine/runner.sh --prepare"
+}
+
 harden_ssh() {
   ((HARDEN)) || return 0
   log "SSH: key-only login"
@@ -447,6 +456,7 @@ ssh_key
 shell_config
 ai_tools
 agent_frameworks
+actions_runner
 record_settings
 harden_ssh
 firewall

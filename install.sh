@@ -10,8 +10,8 @@
 #                          (created as a private repo, if you agree, when missing)
 #   --agents LIST          AI coding CLIs, comma-separated: claude, codex, opencode
 #                          (default: all three; a re-run keeps the previous choice)
-#   --runner               run the project's GitHub Actions jobs on this machine,
-#                          as a self-hosted runner (machine/runner.sh)
+#   --runner               connect this machine's GitHub Actions runner (installed in
+#                          /home/runner/actions-runner) to the project, so its jobs run here
 #   Other options go to machine/bootstrap.sh; see machine/bootstrap.sh --help.
 set -euo pipefail
 
@@ -32,7 +32,7 @@ done
 "$HERE/machine/login.sh"
 if ((runner)); then
   "$HERE/machine/runner.sh" ||
-    echo "The runner isn't set up; re-run: ~/dev-baseline/machine/runner.sh" >&2
+    echo "The runner isn't connected; re-run: ~/dev-baseline/machine/runner.sh" >&2
 fi
 
 # Hand over a fresh shell, so PATH, mise and the `dev` command are live.
