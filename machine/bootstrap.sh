@@ -100,16 +100,25 @@ install_if_absent() {
   fi
 }
 
-# Replace (or append) the dev-baseline block in a shell startup file.
+# Replace (or append) the dev-baseline block in a file. The markers default to
+# shell comments; pass others for other kinds of file.
 write_block() {
-  local file=$1 body=$2 tmp
+  local file=$1 body=$2 begin=${3:-$MARK_BEGIN} end=${4:-$MARK_END} tmp
   tmp=$(mktemp)
   if [[ -f $file ]]; then
-    awk -v b="$MARK_BEGIN" -v e="$MARK_END" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$file" >"$tmp"
+    awk -v b="$begin" -v e="$end" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$file" >"$tmp"
   fi
-  printf '%s\n%s\n%s\n' "$MARK_BEGIN" "$body" "$MARK_END" >>"$tmp"
+  printf '%s\n%s\n%s\n' "$begin" "$body" "$end" >>"$tmp"
   cat "$tmp" >"$file"
   rm -f "$tmp"
+}
+
+# What every AI CLI here should know in any project, such as how to run a
+# GitHub Actions runner: a block in its global instructions, refreshed each run.
+agent_notes() {
+  mkdir -p "$(dirname "$1")"
+  write_block "$1" "$(cat "$FILES/agent-notes.md")" \
+    "<!-- >>> dev-baseline >>> -->" "<!-- <<< dev-baseline <<< -->"
 }
 
 preflight() {
@@ -285,6 +294,7 @@ install_claude() {
   echo "  claude $("$bin" --version 2>/dev/null || echo 'not found')"
   install -d -m 0700 "$HOME/.claude"
   install_if_absent "$FILES/claude-settings.json" "$HOME/.claude/settings.json"
+  agent_notes "$HOME/.claude/CLAUDE.md"
 }
 
 # Codex and OpenCode are npm packages; mise supplies their Node and upgrades
@@ -294,6 +304,7 @@ install_codex() {
   echo "  $(mise exec -- codex --version 2>/dev/null || echo 'codex not found')"
   install -d -m 0700 "$HOME/.codex"
   install_if_absent "$FILES/codex-config.toml" "$HOME/.codex/config.toml"
+  agent_notes "$HOME/.codex/AGENTS.md"
 }
 
 # Its default config uses OpenCode 1's `permission` keys, which OpenCode 2 still
@@ -303,6 +314,7 @@ install_opencode() {
   echo "  opencode $(mise exec -- opencode --version 2>/dev/null || echo 'not found')"
   mkdir -p "$HOME/.config/opencode"
   install_if_absent "$FILES/opencode.json" "$HOME/.config/opencode/opencode.json"
+  agent_notes "$HOME/.config/opencode/AGENTS.md"
 }
 
 ai_tools() {

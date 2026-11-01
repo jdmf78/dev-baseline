@@ -96,13 +96,15 @@ start a second one. Instead:
 ## GitHub Actions jobs on this machine
 
 When the user wants CI or deploys to run here (no Actions minutes, deploys
-without SSH), run `~/dev-baseline/machine/runner.sh`. It registers this
-machine as a self-hosted runner, running as the `runner` user because GitHub's
-runner refuses root, and sets the repo variable `RUNS_ON=self-hosted`, which
-the jobs in `ci.yml` and `release.yml` read. New jobs use the same
+without SSH), run `~/dev-baseline/machine/runner.sh`, never `config.sh`,
+`run.sh` or `svc.sh` by hand. It registers this machine as a self-hosted
+runner (or adopts one set up by hand in `~runner`), running as the `runner`
+user as a systemd service because GitHub's runner refuses root, and sets the
+repo variable `RUNS_ON=self-hosted`, which the jobs in `ci.yml` and
+`release.yml` read. New jobs use the same
 `runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}`. Jobs run as `runner` with
-Docker and sudo; logs are in `~runner/actions-runner/*/_diag/`. `--remove`
-undoes it.
+Docker and sudo. `runner.sh --status` shows whether it's online and where its
+logs are (`journalctl -u 'actions.runner.*'`); `--remove` undoes it.
 
 ## Without Docker
 

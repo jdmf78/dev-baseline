@@ -116,9 +116,16 @@ phase, and Codex, when installed, reviews the code as a second opinion.
   project its own disposable container.
 - GitHub's runner refuses root: `./config.sh` stops with "Must not run with
   sudo". `--runner` avoids that with a `runner` user that has Docker and sudo,
-  like GitHub's own runners. To run one as root by hand anyway, set
-  `export RUNNER_ALLOW_RUNASROOT=1` first. Self-hosted runners belong on
-  private repos; on a public one, `--runner` asks first.
+  like GitHub's own runners, and runs it as a service that survives reboots.
+  A runner you set up by hand in `/home/runner` is kept and turned into that
+  service; `machine/runner.sh --status` shows how it's doing. To run one as
+  root by hand anyway, set `export RUNNER_ALLOW_RUNASROOT=1` first.
+  Self-hosted runners belong on private repos; on a public one, `--runner`
+  asks first.
+- Every AI tool on the machine gets short notes in its global instructions
+  (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+  `~/.config/opencode/AGENTS.md`) on using these scripts, so agents handle
+  the runner the same way on every machine.
 - On GitHub's free plan, private repos can't have branch protection. Use GitHub
   Pro or a public repo before turning on `AUTO_MERGE`.
 - Every parallel agent is its own AI session, so cost grows with parallelism.

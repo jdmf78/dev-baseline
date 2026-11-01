@@ -7,17 +7,20 @@
 # GitHub's runner won't run as root ("Must not run with sudo") unless
 # RUNNER_ALLOW_RUNASROOT=1 is set. This script runs it as its own user,
 # `runner`, as a systemd service, with Docker and passwordless sudo like
-# GitHub's own runners. Then it sets the repo variable RUNS_ON=self-hosted,
-# which the project template's workflows read to send their jobs here.
+# GitHub's own runners. A runner already set up by hand in that user's home
+# (such as /home/runner/actions-runner) is kept and turned into the service.
+# Then it sets the repo variable RUNS_ON=self-hosted, which the project
+# template's workflows read to send their jobs here.
 #
-# Usage: machine/runner.sh [--project OWNER/REPO] [--remove]
+# Usage: machine/runner.sh [--project OWNER/REPO] [--status | --remove]
 #   --project OWNER/REPO   defaults to your project (login.sh --project)
+#   --status               show whether the runner is online and how it runs
 #   --remove               unregister this machine's runner and delete it
 set -euo pipefail
 
 STATE="$HOME/.config/dev-baseline"
 RUNNER_USER=runner
-PROJECT="" REMOVE=0 RESTART=0 RUNNER_HOME="" DIR=""
+PROJECT="" REMOVE=0 STATUS=0 RESTART=0 RUNNER_HOME="" DIR=""
 RUN_AS=()
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -32,6 +35,7 @@ while (($#)); do
   case $1 in
     --project) PROJECT=${2:?--project needs OWNER/REPO}; shift 2 ;;
     --remove)  REMOVE=1; shift ;;
+    --status)  STATUS=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *)         usage; die "unknown option: $1" ;;
   esac
@@ -47,8 +51,18 @@ NAME=$(hostname -s)
 SESSION="runner-${PROJECT##*/}"
 
 set_dir() {
+  local found name
   RUNNER_HOME=$(getent passwd "$RUNNER_USER" | cut -d: -f6)
   DIR="$RUNNER_HOME/actions-runner/${PROJECT/\//-}"
+  # Keep a runner for this repo that's already set up in the runner's home,
+  # for example by hand in ~runner/actions-runner, under its own name.
+  found=$(as_root find "$RUNNER_HOME" -maxdepth 3 -name .runner -exec grep -liE \
+    "\"gitHubUrl\": *\"https://github.com/${PROJECT//./\\.}/?\"" {} + 2>/dev/null | head -n 1) || true
+  if [[ -n $found ]]; then
+    DIR=${found%/.runner}
+    name=$(as_root grep -oiE '"agentName": *"[^"]*"' "$found" | cut -d'"' -f4) || true
+    NAME=${name:-$NAME}
+  fi
   # As the runner user, in its folder, with a clean environment: config.sh
   # records PATH and a few variables as the starting point of every job.
   RUN_AS=(runuser -u "$RUNNER_USER" -- env -i -C "$DIR" HOME="$RUNNER_HOME" USER="$RUNNER_USER"
@@ -68,6 +82,21 @@ runner_status() {
 stop_runner() {
   if has .service; then svc uninstall || true; fi
   as_root tmux kill-session -t "$SESSION" 2>/dev/null || true
+  stop_by_hand
+}
+
+# A runner started by hand (./run.sh in a terminal, tmux or screen) holds the
+# connection to GitHub the service needs, so stop it before the service starts.
+started_by_hand() { as_root pgrep -f "$DIR/bin/Runner.Listener" >/dev/null; }
+stop_by_hand() {
+  started_by_hand || return 0
+  warn "Stopping the runner started by hand in $DIR, so the service can take over."
+  as_root pkill -INT -f "$DIR/bin/Runner.Listener" || true
+  for _ in {1..30}; do
+    started_by_hand || return 0
+    sleep 1
+  done
+  die "It's still running, maybe finishing a job. Stop it with Ctrl-C where it runs, then re-run this."
 }
 
 check_public() {
@@ -148,17 +177,26 @@ register_runner() {
 }
 
 start_runner() {
+  local unit
   if systemd_running; then
     if ! has .service; then
+      stop_by_hand
       svc install "$RUNNER_USER"
-    elif ((RESTART)); then
-      as_root systemctl restart "$(as_root cat "$DIR/.service")"
+    else
+      unit=$(as_root cat "$DIR/.service")
+      if ! as_root systemctl is-active --quiet "$unit"; then
+        stop_by_hand
+      elif ((RESTART)); then
+        as_root systemctl restart "$unit"
+      fi
     fi
     svc start
   else
     # Containers without systemd: a tmux session, which ends when the machine restarts.
-    as_root tmux has-session -t "$SESSION" 2>/dev/null ||
+    if ! as_root tmux has-session -t "$SESSION" 2>/dev/null; then
+      stop_by_hand
       as_root tmux new-session -d -s "$SESSION" "$(printf '%q ' "${RUN_AS[@]}" ./run.sh)"
+    fi
     warn "No systemd here, so the runner runs in root's tmux session $SESSION. Re-run this after a restart."
   fi
   log "Waiting for the runner to come online"
@@ -166,7 +204,33 @@ start_runner() {
     [[ $(runner_status) != online ]] || return 0
     sleep 2
   done
-  warn "Runner $NAME isn't online yet. Its logs: $DIR/_diag/Runner_*.log"
+  warn "Runner $NAME isn't online yet. Check: ~/dev-baseline/machine/runner.sh --status"
+}
+
+# Exits non-zero unless GitHub sees the runner online.
+show_status() {
+  local github how logs="$DIR/_diag/"
+  github=$(gh api --paginate "repos/$PROJECT/actions/runners" --jq ".runners[] | select(.name == \"$NAME\")
+    | .status + (if .busy then \", running a job\" else \"\" end)")
+  if has .service; then
+    how=$(as_root cat "$DIR/.service")
+    logs="journalctl -u $how, and $logs"
+    how="service $how: $(systemctl is-active "$how" 2>/dev/null || true)"
+  elif as_root tmux has-session -t "$SESSION" 2>/dev/null; then
+    how="root's tmux session $SESSION (no systemd here)"
+  elif started_by_hand; then
+    how="started by hand, not a service: run ~/dev-baseline/machine/runner.sh to make it one"
+  else
+    how="not running: run ~/dev-baseline/machine/runner.sh to start it"
+  fi
+  cat <<EOF
+Runner $NAME for $PROJECT
+  GitHub   ${github:-not registered}
+  Runs     as $RUNNER_USER, $how
+  Folder   $DIR
+  Logs     $logs
+EOF
+  [[ $github == online* ]]
 }
 
 remove_runner() {
@@ -191,6 +255,12 @@ if ((REMOVE)); then
   remove_runner
   exit 0
 fi
+if ((STATUS)); then
+  { id "$RUNNER_USER" >/dev/null 2>&1 && set_dir && has .runner; } ||
+    die "No runner for $PROJECT on this machine. Set one up: ~/dev-baseline/machine/runner.sh"
+  show_status
+  exit
+fi
 check_public
 runner_user
 download_runner
@@ -205,6 +275,7 @@ Runner $NAME works for $PROJECT (GitHub: Settings > Actions > Runners).
   Jobs   The project template's workflows run here while RUNS_ON is set.
          Other workflows: put runs-on: self-hosted on the jobs that should.
   Runs   as user $RUNNER_USER, from $DIR
+  Check  ~/dev-baseline/machine/runner.sh --status     (online? service? where the logs are)
   Undo   gh variable delete RUNS_ON --repo $PROJECT   (jobs back to GitHub's machines)
          ~/dev-baseline/machine/runner.sh --remove     (remove the runner as well)
 EOF
