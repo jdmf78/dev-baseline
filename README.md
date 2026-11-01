@@ -106,6 +106,42 @@ The safeguards: `main` only accepts pull requests that pass CI, agents never
 merge (you do, or the autopilot when `AUTO_MERGE=1`), GSD verifies every
 phase, and Codex, when installed, reviews the code as a second opinion.
 
+## GitHub Actions runner
+
+Every machine gets a self-hosted runner in `/home/runner/actions-runner`,
+ready to connect to a repo. It runs as its own `runner` user, because
+GitHub's runner refuses root ("Must not run with sudo"). `--runner`, or later
+`~/dev-baseline/machine/runner.sh`, connects it and runs it as a service that
+survives reboots; a runner you started there by hand is turned into that
+service. `~/dev-baseline/machine/runner.sh --status` shows how it's doing.
+Self-hosted runners belong on private repos; on a public one, `--runner`
+asks first.
+
+The installer creates the user. By hand, as root, that's:
+
+```bash
+useradd -m -s /bin/bash runner
+```
+
+The user needs the `docker` group only if jobs use Docker (`docker build`,
+`docker compose`, or `container:` and `services:` in a workflow). Without
+it, those jobs fail with "permission denied" on `/var/run/docker.sock`:
+
+```bash
+usermod -aG docker runner
+```
+
+Installing Docker creates that group. With `--no-docker` there's no `docker`
+group and nothing to add, so skip that step; don't create the group by hand,
+since it does nothing without Docker. If you install Docker later, add the
+user then and restart the runner, because a running runner doesn't see new
+groups. `~/dev-baseline/machine/runner.sh --prepare` does both.
+
+The installer also gives `runner` passwordless sudo, as on GitHub's own
+runners. Docker access and sudo are each as good as root, so keep one
+project per container. To run a runner as root anyway, set
+`export RUNNER_ALLOW_RUNASROOT=1` first.
+
 ## Good to know
 
 - Run `install.sh` again any time. It skips what's done, and updates the AI
@@ -114,14 +150,6 @@ phase, and Codex, when installed, reviews the code as a second opinion.
   enabled on the host (Proxmox: Options > Features).
 - Agents running as root can change anything in their container, so give each
   project its own disposable container.
-- The GitHub Actions runner is in `/home/runner/actions-runner` on every
-  machine, run by a `runner` user with Docker and sudo, like GitHub's own
-  runners, because GitHub's runner refuses root ("Must not run with sudo").
-  Connecting it runs it as a service that survives reboots; a runner you
-  started there by hand is turned into that service.
-  `machine/runner.sh --status` shows how it's doing. To run one as root by
-  hand anyway, set `export RUNNER_ALLOW_RUNASROOT=1` first. Self-hosted
-  runners belong on private repos; on a public one, `--runner` asks first.
 - Every AI tool on the machine gets short notes in its global instructions
   (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
   `~/.config/opencode/AGENTS.md`) on using these scripts, so agents handle
