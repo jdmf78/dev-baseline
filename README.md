@@ -113,17 +113,24 @@ ready to connect to a repo. It runs as its own `runner` user, because
 GitHub's runner refuses root ("Must not run with sudo"). `--runner`, or later
 `~/dev-baseline/machine/runner.sh`, connects it and runs it as a service that
 survives reboots; a runner you started there by hand is turned into that
-service. `~/dev-baseline/machine/runner.sh --status` shows how it's doing.
-Self-hosted runners belong on private repos; on a public one, `--runner`
-asks first.
+service. Self-hosted runners belong on private repos; on a public one,
+`--runner` asks first.
+
+A runner serves one repository, but the same machine can run one for each of
+your repositories. Each further one gets its own folder,
+`/home/runner/actions-runner-OWNER-REPO`, and its own service:
+
+```bash
+~/dev-baseline/machine/runner.sh --project YOUR_USERNAME/OTHER_PROJECT
+```
+
+`runner.sh --status` lists every runner on the machine, and
+`runner.sh --remove --project YOUR_USERNAME/OTHER_PROJECT` removes one. More
+on what to expect: [More repositories](docs/runner.md#more-repositories).
 
 To set it all up by hand instead, as root, with placeholders for your
 repository and token, from the user to a service that starts at boot, follow
 [docs/runner.md](docs/runner.md).
-
-A runner serves one repository, but the same machine can run one for each of
-your repositories, each with its own token, folder and service; see
-[More repositories](docs/runner.md#more-repositories).
 
 The installer creates the user. By hand, as root, that's:
 

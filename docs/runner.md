@@ -10,10 +10,11 @@ Run every command as root, in one shell, from top to bottom. GitHub's runner
 refuses to run as root ("Must not run with sudo"), so the commands hand the
 steps that need it to the `runner` user.
 
-On a machine set up with dev-baseline, one command does all of this for the
-first repository: `~/dev-baseline/machine/runner.sh --project YOUR_USERNAME/YOUR_PROJECT`.
+On a machine set up with dev-baseline, one command does all of this, for the
+first repository and every one after it:
+`~/dev-baseline/machine/runner.sh --project YOUR_USERNAME/YOUR_PROJECT`.
 The steps below end in the same layout, so `runner.sh --status` and
-`--remove` also work on a runner set up by hand.
+`--remove` also work on runners set up by hand.
 
 ## 1. Fill in your repository and token
 
@@ -157,7 +158,20 @@ of your repositories:
 - They're independent: stopping, updating or removing one leaves the others
   alone.
 
-To add a repository, set its values in a root shell. The folder is named
+On a machine set up with dev-baseline, one command adds a repository. It puts
+the runner in the first runner's folder while that's free, else in a folder
+of its own, connects it, runs it as a service and sets `RUNS_ON`:
+
+```bash
+~/dev-baseline/machine/runner.sh --project YOUR_USERNAME/OTHER_PROJECT
+```
+
+`runner.sh --status` lists every runner on the machine, and
+`runner.sh --remove --project YOUR_USERNAME/OTHER_PROJECT` disconnects one.
+Removing a further repository's runner deletes its folder; the first runner
+stays installed.
+
+By hand, set the repository's values in a root shell. The folder is named
 after the repository, so every machine names it the same way:
 
 ```bash
@@ -173,9 +187,8 @@ Set `RUNS_ON` for that repository too. To see every runner on the machine:
 systemctl list-units 'actions.runner.*'
 ```
 
-dev-baseline's `runner.sh` manages only the runner in
-`/home/runner/actions-runner`. Manage the others with the commands here, after
-setting `DIR` to their folder.
+Keep runners in these folders: `runner.sh` finds a runner by its folder, and
+one kept anywhere else could end up with a second runner for its repository.
 
 ### One runner for many repositories
 
@@ -199,6 +212,10 @@ Runner groups, which GitHub advises against. It still takes one job at a
 time: for more at once, add another runner for the organization in its own
 folder and with its own name, by adding `--name $(hostname -s)-2` to step 4.
 With the same name, `--replace` would take over the first one.
+
+`runner.sh` connects runners to repositories, not organizations, so connect
+this one by hand as above. Once it's connected, `runner.sh --status` shows it
+and `runner.sh --remove --project YOUR_ORGANIZATION` removes it.
 
 ## Remove it
 

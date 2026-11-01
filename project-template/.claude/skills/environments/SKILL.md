@@ -103,9 +103,11 @@ connect it with `~/dev-baseline/machine/runner.sh`, never `config.sh`,
 repo variable `RUNS_ON=self-hosted`, which the jobs in `ci.yml` and
 `release.yml` read. New jobs use the same
 `runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}`. Jobs run as `runner` with
-Docker and sudo. `runner.sh --status` shows its repo, whether it's online and
-where its logs are (`journalctl -u 'actions.runner.*'`); `--remove`
-disconnects it.
+Docker and sudo. If the machine's runner already serves another repo,
+`runner.sh --project OWNER/REPO` adds a runner of its own for this one.
+`runner.sh --status` lists every runner here, whether it's online and where
+its logs are (`journalctl -u 'actions.runner.*'`);
+`runner.sh --remove --project OWNER/REPO` disconnects this repo's.
 
 ## Without Docker
 

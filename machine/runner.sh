@@ -1,35 +1,34 @@
 #!/usr/bin/env bash
-# The GitHub Actions self-hosted runner, in the same place on every machine:
-# /home/runner/actions-runner, run by the user `runner`. bootstrap.sh installs
-# it ready to use (--prepare) but connected to no repo. Running this script
-# connects it to your project, so the project's workflow jobs (CI, image
-# builds, deploys) run here, and keeps it running as a systemd service. Safe
-# to re-run: it repairs what's missing and leaves a working runner alone.
+# GitHub Actions self-hosted runners, in the same place on every machine and
+# run by the user `runner`. bootstrap.sh installs the first one ready to use
+# (--prepare) in /home/runner/actions-runner, connected to no repo. Running
+# this script connects it to your project, so the project's workflow jobs (CI,
+# image builds, deploys) run here, and keeps it running as a systemd service.
+# A runner serves one repo, so each further repo gets a runner of its own, in
+# /home/runner/actions-runner-OWNER-REPO with its own service. Safe to re-run:
+# it repairs what's missing and leaves a working runner alone.
 #
 # GitHub's runner won't run as root ("Must not run with sudo") unless
 # RUNNER_ALLOW_RUNASROOT=1 is set. Instead, `runner` has Docker and
-# passwordless sudo, like GitHub's own runners. One runner serves one repo.
-# Connecting also sets the repo variable RUNS_ON=self-hosted, which the
-# project template's workflows read to send their jobs here.
+# passwordless sudo, like GitHub's own runners. Connecting also sets the repo
+# variable RUNS_ON=self-hosted, which the project template's workflows read to
+# send their jobs here.
 #
-# Usage: machine/runner.sh [--project OWNER/REPO | --prepare | --status | --remove]
-#   --project OWNER/REPO   repo to connect to (default: your project, from login.sh)
-#   --prepare              install or update it without a repo (bootstrap.sh runs this)
-#   --status               its repo, whether it's online, how it runs, where its logs are
-#   --remove               disconnect it from its repo; it stays installed and ready
+# Usage: machine/runner.sh [--project OWNER/REPO] [--status | --remove] | --prepare
+#   --project OWNER/REPO   repo to connect a runner to (default: your project, from
+#                          login.sh); with --status or --remove, that repo's runner
+#   --status               every runner here: its repo, online or not, how it runs, its logs
+#   --remove               disconnect a runner from its repo (with several, pick it by --project)
+#   --prepare              install or update the first runner, without a repo (bootstrap.sh runs this)
 set -euo pipefail
 
 STATE="$HOME/.config/dev-baseline"
 RUNNER_USER=runner
 RUNNER_HOME=/home/runner
-DIR=$RUNNER_HOME/actions-runner
-SESSION=actions-runner
+MAIN=$RUNNER_HOME/actions-runner
+HOST=$(hostname -s)
 MODE=connect PROJECT="" PRIVATE="" RESTART=0
-NAME=$(hostname -s)
-# As the runner user, in its folder, with a clean environment: config.sh
-# records PATH and a few variables as the starting point of every job.
-RUN_AS=(runuser -u "$RUNNER_USER" -- env -i -C "$DIR" HOME="$RUNNER_HOME" USER="$RUNNER_USER"
-  LANG=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
+DIRS=()
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
@@ -51,6 +50,26 @@ while (($#)); do
   esac
 done
 
+# Work on the runner in folder $1, with its own tmux session where there's no
+# systemd. Commands run as the runner user, in its folder, with a clean
+# environment: config.sh records PATH and a few variables as the starting
+# point of every job.
+use_dir() {
+  DIR=$1 SESSION=${1##*/} NAME=$HOST
+  SESSION=${SESSION//[.:]/_}
+  RUN_AS=(runuser -u "$RUNNER_USER" -- env -i -C "$DIR" HOME="$RUNNER_HOME" USER="$RUNNER_USER"
+    LANG=C.UTF-8 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin)
+}
+use_dir "$MAIN"
+
+# Every runner folder here: the first runner's, then one per further repo.
+runner_dirs() {
+  local d
+  DIRS=("$MAIN")
+  while IFS= read -r d; do DIRS+=("$d"); done < <(as_root find "$RUNNER_HOME" -mindepth 1 \
+    -maxdepth 1 -type d -name 'actions-runner-*' 2>/dev/null | sort)
+}
+
 as_runner() { as_root "${RUN_AS[@]}" "$@"; }
 # The runner's home isn't readable by other users, so check its files as root.
 has() { as_root test -e "$DIR/$1"; }
@@ -71,11 +90,15 @@ connected_repo() {
   url=${url#https://github.com/}
   echo "${url%/}"
 }
+# Where GitHub's API keeps the runners of $PROJECT: a repo, or an organization
+# for a runner connected to one by hand (docs/runner.md).
+scope() { if [[ $PROJECT == */* ]]; then echo "repos/$PROJECT"; else echo "orgs/$PROJECT"; fi; }
 
 # The GitHub login must be able to manage the repo's runners (admin rights).
 need_github() {
   local admin
   gh auth status >/dev/null 2>&1 || die "Sign in to GitHub first: ~/dev-baseline/machine/login.sh"
+  [[ $PROJECT == */* ]] || return 0
   read -r PRIVATE admin < <(gh api "repos/$PROJECT" --jq '"\(.private) \(.permissions.admin)"' 2>/dev/null) || true
   [[ ${admin:-} == true ]] ||
     die "Managing runners for $PROJECT needs admin rights there, which this GitHub login doesn't have (or it can't see the repo)."
@@ -83,7 +106,7 @@ need_github() {
 
 # This runner on GitHub: online, offline, or empty if it isn't registered.
 runner_status() {
-  gh api --paginate "repos/$PROJECT/actions/runners" --jq ".runners[] | select(.name == \"$NAME\") | .status"
+  gh api --paginate "$(scope)/actions/runners" --jq ".runners[] | select(.name == \"$NAME\") | .status"
 }
 
 stop_runner() {
@@ -199,12 +222,29 @@ download_runner() {
 prepare_runner() {
   log "GitHub Actions runner in $DIR, run by user $RUNNER_USER"
   runner_user
-  move_old_layout
+  if [[ $DIR == "$MAIN" ]]; then move_old_layout; fi
   download_runner
-  # New group memberships reach a running service only after a restart.
-  if ((RESTART)) && has .service; then
-    as_root systemctl restart "$(as_root cat "$DIR/.service")" 2>/dev/null || true
+  # New group memberships reach running runners only after a restart.
+  if ((RESTART)) && systemd_running; then
+    as_root systemctl try-restart 'actions.runner.*' 2>/dev/null || true
   fi
+}
+
+# The folder for $PROJECT's runner: the one already connected to it, else the
+# first runner's while it's free, else a new one named after the repo.
+pick_dir() {
+  local d
+  runner_dirs
+  for d in "${DIRS[@]}"; do
+    use_dir "$d"
+    if [[ $(lower "$(connected_repo)") == "$(lower "$PROJECT")" ]]; then return 0; fi
+  done
+  use_dir "$MAIN"
+  [[ -n $(connected_repo) ]] || return 0
+  log "The runner in $MAIN serves $(connected_repo), so $PROJECT gets a runner of its own"
+  use_dir "$MAIN-${PROJECT/\//-}"
+  [[ -z $(connected_repo) ]] ||
+    die "$DIR serves $(connected_repo), not $PROJECT. Remove it (runner.sh --remove --project $(connected_repo)), then re-run."
 }
 
 connect_runner() {
@@ -251,20 +291,14 @@ start_runner() {
   warn "Runner $NAME isn't online yet. Check: ~/dev-baseline/machine/runner.sh --status"
 }
 
-# Exits non-zero unless GitHub sees the runner online.
-show_status() {
+# One connected runner; non-zero unless GitHub sees it online.
+report_runner() {
   local github how logs="$DIR/_diag/"
-  has config.sh || die "No runner installed in $DIR. Install it: ~/dev-baseline/machine/runner.sh --prepare"
-  PROJECT=$(connected_repo)
-  if [[ -z $PROJECT ]]; then
-    echo "Runner installed in $DIR, ready, but not connected to a repo."
-    echo "Connect it: ~/dev-baseline/machine/runner.sh --project OWNER/REPO"
-    return 1
-  fi
   runner_name
-  need_github
-  github=$(gh api --paginate "repos/$PROJECT/actions/runners" --jq ".runners[] | select(.name == \"$NAME\")
-    | .status + (if .busy then \", running a job\" else \"\" end)")
+  gh auth status >/dev/null 2>&1 || die "Sign in to GitHub first: ~/dev-baseline/machine/login.sh"
+  github=$(gh api --paginate "$(scope)/actions/runners" --jq ".runners[] | select(.name == \"$NAME\")
+    | .status + (if .busy then \", running a job\" else \"\" end)" 2>/dev/null) ||
+    github="unknown: this GitHub login can't list the runners of $PROJECT (that needs admin rights)"
   if has .service; then
     how=$(as_root cat "$DIR/.service")
     logs="journalctl -u $how, and $logs"
@@ -272,9 +306,9 @@ show_status() {
   elif as_root tmux has-session -t "$SESSION" 2>/dev/null; then
     how="root's tmux session $SESSION (no systemd here)"
   elif started_by_hand; then
-    how="started by hand, not a service: run ~/dev-baseline/machine/runner.sh to make it one"
+    how="started by hand, not a service: run ~/dev-baseline/machine/runner.sh --project $PROJECT to make it one"
   else
-    how="not running: run ~/dev-baseline/machine/runner.sh to start it"
+    how="not running: run ~/dev-baseline/machine/runner.sh --project $PROJECT to start it"
   fi
   cat <<EOF
 Runner $NAME for $PROJECT
@@ -286,28 +320,73 @@ EOF
   [[ $github == online* ]]
 }
 
-# Unregister it; the installed runner stays, ready to connect again.
+# Every runner here, or the one for --project. Non-zero unless there's at
+# least one and GitHub sees each of them online.
+show_status() {
+  local want=$PROJECT d installed=0 shown=0 connected=0 offline=0
+  runner_dirs
+  for d in "${DIRS[@]}"; do
+    use_dir "$d"
+    has config.sh || continue
+    installed=1
+    PROJECT=$(connected_repo)
+    if [[ -n $want && $(lower "$PROJECT") != "$(lower "$want")" ]]; then continue; fi
+    ((shown == 0)) || echo
+    shown=1
+    if [[ -z $PROJECT ]]; then
+      echo "Runner in $DIR: installed and ready, not connected to a repo."
+      continue
+    fi
+    connected=$((connected + 1))
+    report_runner || offline=$((offline + 1))
+  done
+  ((installed)) || die "No runner installed in $MAIN. Install it: ~/dev-baseline/machine/runner.sh --prepare"
+  if ((connected == 0)); then
+    [[ -z $want ]] || echo "No runner here serves $want."
+    echo "Connect one: ~/dev-baseline/machine/runner.sh --project ${want:-OWNER/REPO}"
+    return 1
+  fi
+  ((offline == 0))
+}
+
+# Unregister a runner. The first runner stays installed, ready to connect
+# again; a further repo's runner goes, folder and all.
 remove_runner() {
-  local token
-  PROJECT=$(connected_repo)
-  if [[ -z $PROJECT ]]; then
-    echo "The runner in $DIR isn't connected to a repo; nothing to remove."
+  local want=$PROJECT d token served=()
+  runner_dirs
+  for d in "${DIRS[@]}"; do
+    use_dir "$d"
+    PROJECT=$(connected_repo)
+    [[ -n $PROJECT ]] || continue
+    if [[ -z $want || $(lower "$PROJECT") == "$(lower "$want")" ]]; then served+=("$d"); fi
+  done
+  if ((${#served[@]} == 0)); then
+    echo "No runner here is connected to ${want:-a repo}; nothing to remove."
     return 0
   fi
+  ((${#served[@]} == 1)) ||
+    die "Several runners here; pick one: ~/dev-baseline/machine/runner.sh --remove --project OWNER/REPO (--status lists them)"
+  use_dir "${served[0]}"
+  PROJECT=$(connected_repo)
   runner_name
   need_github
   log "Disconnecting runner $NAME from $PROJECT"
   stop_runner
-  token=$(gh api -X POST "repos/$PROJECT/actions/runners/remove-token" --jq .token)
+  token=$(gh api -X POST "$(scope)/actions/runners/remove-token" --jq .token)
   if ! as_runner ./config.sh remove --token "$token"; then
     warn "Couldn't unregister it on GitHub; delete $NAME under Settings > Actions > Runners."
     as_root rm -f "$DIR/.runner" "$DIR/.credentials" "$DIR/.credentials_rsaparams"
   fi
-  if [[ $(gh api "repos/$PROJECT/actions/runners" --jq .total_count) == 0 ]]; then
+  if [[ $PROJECT == */* && $(gh api "repos/$PROJECT/actions/runners" --jq .total_count) == 0 ]]; then
     gh variable delete RUNS_ON --repo "$PROJECT" >/dev/null 2>&1 || true
     echo "No runners left for $PROJECT, so its jobs run on GitHub's machines again."
   fi
-  echo "The runner stays installed in $DIR. Connect it again: ~/dev-baseline/machine/runner.sh --project OWNER/REPO"
+  if [[ $DIR == "$MAIN" ]]; then
+    echo "The runner stays installed in $DIR. Connect it again: ~/dev-baseline/machine/runner.sh --project OWNER/REPO"
+  else
+    as_root rm -rf "$DIR"
+    echo "Deleted its folder, $DIR."
+  fi
 }
 
 case $MODE in
@@ -319,10 +398,8 @@ esac
 [[ -n $PROJECT ]] || PROJECT=$(cat "$STATE/project" 2>/dev/null || true)
 [[ -n $PROJECT ]] || die "No project set: run with --project OWNER/REPO"
 [[ $PROJECT =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--project must look like OWNER/REPO (got: $PROJECT)"
+pick_dir
 current=$(connected_repo)
-if [[ -n $current && $(lower "$current") != "$(lower "$PROJECT")" ]]; then
-  die "This machine's runner serves $current, and one runner serves one repo. Keep it: runner.sh --project $current. Switch: runner.sh --remove, then connect again. A runner for $PROJECT as well: ~/dev-baseline/docs/runner.md, More repositories."
-fi
 need_github
 [[ -n $current ]] || check_public
 prepare_runner
@@ -337,7 +414,7 @@ Runner $NAME works for $PROJECT (GitHub: Settings > Actions > Runners).
   Jobs   The project template's workflows run here while RUNS_ON is set.
          Other workflows: put runs-on: self-hosted on the jobs that should.
   Runs   as user $RUNNER_USER, from $DIR
-  Check  ~/dev-baseline/machine/runner.sh --status     (online? service? where the logs are)
+  Check  ~/dev-baseline/machine/runner.sh --status     (every runner here: online? service? logs?)
   Undo   gh variable delete RUNS_ON --repo $PROJECT   (jobs back to GitHub's machines)
-         ~/dev-baseline/machine/runner.sh --remove     (disconnect it; it stays installed)
+         ~/dev-baseline/machine/runner.sh --remove --project $PROJECT   (disconnect it)
 EOF
