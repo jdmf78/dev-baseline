@@ -123,5 +123,6 @@ Done for $REPO. One-time steps left:
   - Codex PR review (optional): gh secret set OPENAI_API_KEY --repo $REPO
                                 gh variable set CODEX_REVIEW --body true --repo $REPO
   - Deploys, once release.yml has a target: gh variable set DEPLOY_ENABLED --body true --repo $REPO
-  - Jobs on your own server instead of GitHub's: ~/dev-baseline/machine/runner.sh
+  - Jobs on your own runner server (not this machine; set one up with
+    ~/dev-baseline/docs/runner.md): gh variable set RUNS_ON --body self-hosted --repo $REPO
 EOF

@@ -84,7 +84,6 @@ Another project on the same machine:
 | Option | Use it when |
 |---|---|
 | `--agents claude,codex,opencode` | You want fewer AI tools than all three. List the ones to install. Later runs keep your choice until you give a new list. |
-| `--runner` | Your project's GitHub Actions jobs (CI, deploys) should run on this machine instead of GitHub's. Every machine gets a runner in `/home/runner/actions-runner`; this connects it to your project. Later: `~/dev-baseline/machine/runner.sh`. |
 | `--domain dev.example.com` | Projects should be reachable on the web: sites, APIs, webhooks. First point a wildcard DNS record, `*.dev.example.com`, at this machine. Agents then publish each project at `NAME.dev.example.com` with HTTPS, without asking you. |
 | `--harden` | The machine is reachable from the internet: SSH keys only, firewall, fail2ban. Copy your laptop's key to it first (`ssh-copy-id root@your-server`); without a key there, password login stays on. Not needed for local containers. |
 | `--no-docker` | You don't want Docker. |
@@ -99,63 +98,33 @@ with a private noreply address.
 |---|---|
 | [GSD Core](https://github.com/open-gsd/gsd-core) | Plans and builds: goal → phases → parallel waves of agents → verified → pull request |
 | [gstack](https://github.com/garrytan/gstack) | Checks quality: code and design review, browser QA, security audits |
-| `machine/` | Installs your pick of Claude Code, Codex and OpenCode, plus GSD Core, gstack, Docker, gh, git, the latest Python, Node, Bun, just, tmux, screen and curl, and a GitHub Actions runner ready to connect, then signs you in and clones your project |
+| `machine/` | Installs your pick of Claude Code, Codex and OpenCode, plus GSD Core, gstack, Docker, gh, git, the latest Python, Node, Bun, just, tmux, screen and curl, then signs you in and clones your project |
 | `project-template/` | What every new project starts with: rules for agents (`AGENTS.md`), playbooks so they set up Docker, websites, webhooks, deploys and GitHub settings on their own, CI/CD, branch protection, a webhook receiver, HTTPS through Caddy |
 
 The safeguards: `main` only accepts pull requests that pass CI, agents never
 merge (you do, or the autopilot when `AUTO_MERGE=1`), GSD verifies every
 phase, and Codex, when installed, reviews the code as a second opinion.
 
-## GitHub Actions runner
+## GitHub Actions runners
 
-Every machine gets a self-hosted runner in `/home/runner/actions-runner`,
-ready to connect to a repo. It runs as its own `runner` user, because
-GitHub's runner refuses root ("Must not run with sudo"). `--runner`, or later
-`~/dev-baseline/machine/runner.sh`, connects it and runs it as a service that
-survives reboots; a runner you started there by hand is turned into that
-service. Self-hosted runners belong on private repos; on a public one,
-`--runner` asks first.
+Development machines never run GitHub Actions runners: the installer sets
+none up, and the agents are told not to. A job runs with Docker and sudo, so
+here it could reach the agents' sign-ins, keys and code. By default, CI runs on
+GitHub's machines.
 
-A runner serves one repository, but the same machine can run one for each of
-your repositories. Each further one gets its own folder,
-`/home/runner/actions-runner-OWNER-REPO`, and its own service:
+To run jobs on your own hardware instead, set up a server of its own with
+[docs/runner.md](docs/runner.md): commands to paste as root that create a
+`runner` user and run a runner for each of your repositories as a service
+that starts at boot. Then send your project's jobs there:
 
 ```bash
-~/dev-baseline/machine/runner.sh --project YOUR_USERNAME/OTHER_PROJECT
+gh variable set RUNS_ON --body self-hosted --repo YOUR_USERNAME/YOUR_PROJECT
 ```
 
-`runner.sh --status` lists every runner on the machine, and
-`runner.sh --remove --project YOUR_USERNAME/OTHER_PROJECT` removes one. More
-on what to expect: [More repositories](docs/runner.md#more-repositories).
-
-To set it all up by hand instead, as root, with placeholders for your
-repository and token, from the user to a service that starts at boot, follow
-[docs/runner.md](docs/runner.md).
-
-The installer creates the user. By hand, as root, that's:
-
-```bash
-useradd -m -s /bin/bash runner
-```
-
-The user needs the `docker` group only if jobs use Docker (`docker build`,
-`docker compose`, or `container:` and `services:` in a workflow). Without
-it, those jobs fail with "permission denied" on `/var/run/docker.sock`:
-
-```bash
-usermod -aG docker runner
-```
-
-Installing Docker creates that group. With `--no-docker` there's no `docker`
-group and nothing to add, so skip that step; don't create the group by hand,
-since it does nothing without Docker. If you install Docker later, add the
-user then and restart the runner, because a running runner doesn't see new
-groups. `~/dev-baseline/machine/runner.sh --prepare` does both.
-
-The installer also gives `runner` passwordless sudo, as on GitHub's own
-runners. Docker access and sudo are each as good as root, so keep one
-project per container. To run a runner as root anyway, set
-`export RUNNER_ALLOW_RUNASROOT=1` first.
+Machines set up by an older version have a runner in `/home/runner`. The
+installer points it out, and
+[Take runners off a machine](docs/runner.md#take-runners-off-a-machine)
+removes it.
 
 ## Good to know
 
@@ -167,8 +136,8 @@ project per container. To run a runner as root anyway, set
   project its own disposable container.
 - Every AI tool on the machine gets short notes in its global instructions
   (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
-  `~/.config/opencode/AGENTS.md`) on using these scripts, so agents handle
-  the runner the same way on every machine.
+  `~/.config/opencode/AGENTS.md`) on using these scripts and on keeping
+  runners off the machine, so agents work the same way on every machine.
 - On GitHub's free plan, private repos can't have branch protection. Use GitHub
   Pro or a public repo before turning on `AUTO_MERGE`.
 - Every parallel agent is its own AI session, so cost grows with parallelism.

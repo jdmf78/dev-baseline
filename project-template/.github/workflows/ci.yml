@@ -1,7 +1,8 @@
 name: CI
 
-# Jobs run on GitHub's machines, or on your own server once it's a self-hosted
-# runner: ~/dev-baseline/machine/runner.sh sets the repo variable RUNS_ON.
+# Jobs run on GitHub's machines, or on your own runner server (never the
+# development machine; see dev-baseline's docs/runner.md) once the repo
+# variable RUNS_ON is self-hosted.
 on:
   pull_request:
   push:

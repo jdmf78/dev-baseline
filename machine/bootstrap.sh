@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Idempotent bootstrap for an Ubuntu (24.04+) dev server or container that runs
-# AI coding agents: Claude Code, Codex and OpenCode, all or the ones you pick,
-# plus a GitHub Actions runner, ready to connect to a repo with runner.sh.
+# AI coding agents: Claude Code, Codex and OpenCode, all or the ones you pick.
+# It never installs a GitHub Actions runner: runners run on servers of their
+# own, set up with docs/runner.md.
 # Run as root (the default in LXC containers) or as a user with sudo. Safe to
 # re-run: every step skips work that is already done.
 #
@@ -114,8 +115,9 @@ write_block() {
   rm -f "$tmp"
 }
 
-# What every AI CLI here should know in any project, such as how to run a
-# GitHub Actions runner: a block in its global instructions, refreshed each run.
+# What every AI CLI here should know in any project, such as keeping GitHub
+# Actions runners off this machine: a block in its global instructions,
+# refreshed each run.
 agent_notes() {
   mkdir -p "$(dirname "$1")"
   write_block "$1" "$(cat "$FILES/agent-notes.md")" \
@@ -355,12 +357,14 @@ agent_frameworks() {
   done
 }
 
-# The GitHub Actions runner, in /home/runner/actions-runner on every machine:
-# installed and ready, but connected to no repo until runner.sh runs
-# (install.sh --runner does that). Re-running this updates it until then.
-actions_runner() {
-  "${FILES%/files}/runner.sh" --prepare ||
-    warn "The GitHub Actions runner didn't install; re-run: ~/dev-baseline/machine/runner.sh --prepare"
+# Older versions installed a GitHub Actions runner in /home/runner on every
+# machine. Runners don't belong on a development machine, so point it out;
+# removing it is the user's call, since it may still run a repo's jobs.
+old_runner() {
+  # Both are readable by root only.
+  as_root test -e /home/runner/actions-runner -o -e /etc/sudoers.d/runner || return 0
+  warn "This machine has a GitHub Actions runner from an older dev-baseline, in /home/runner."
+  warn "Runners belong on servers of their own. To remove it: ~/dev-baseline/docs/runner.md#take-runners-off-a-machine"
 }
 
 harden_ssh() {
@@ -456,8 +460,8 @@ ssh_key
 shell_config
 ai_tools
 agent_frameworks
-actions_runner
 record_settings
 harden_ssh
 firewall
+old_runner
 summary

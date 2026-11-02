@@ -93,21 +93,18 @@ start a second one. Instead:
   `gh variable set DEPLOY_ENABLED --body true`.
 - If auto mode blocks a deploy as a production action, ask the user to confirm.
 
-## GitHub Actions jobs on this machine
+## GitHub Actions jobs on your own servers
 
-A self-hosted runner is already installed in `/home/runner/actions-runner`,
-run by the `runner` user because GitHub's runner refuses root. When the user
-wants CI or deploys to run here (no Actions minutes, deploys without SSH),
-connect it with `~/dev-baseline/machine/runner.sh`, never `config.sh`,
-`run.sh` or `svc.sh` by hand. That runs it as a systemd service and sets the
-repo variable `RUNS_ON=self-hosted`, which the jobs in `ci.yml` and
-`release.yml` read. New jobs use the same
-`runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}`. Jobs run as `runner` with
-Docker and sudo. If the machine's runner already serves another repo,
-`runner.sh --project OWNER/REPO` adds a runner of its own for this one.
-`runner.sh --status` lists every runner here, whether it's online and where
-its logs are (`journalctl -u 'actions.runner.*'`);
-`runner.sh --remove --project OWNER/REPO` disconnects this repo's.
+Never install, connect or start a GitHub Actions runner on this machine (no
+`config.sh`, `run.sh` or `svc.sh`): it's for development only. Self-hosted
+runners run on servers of their own, which the user sets up with
+`~/dev-baseline/docs/runner.md`. When the user wants CI or deploys off
+GitHub's machines (no Actions minutes, deploys without SSH), point them to
+it. Once this repo has a runner online
+(`gh api repos/OWNER/REPO/actions/runners --jq '.runners[].status'`),
+`gh variable set RUNS_ON --body self-hosted` sends the jobs in `ci.yml` and
+`release.yml` there; `gh variable delete RUNS_ON` sends them back. New jobs
+use the same `runs-on: ${{ vars.RUNS_ON || 'ubuntu-latest' }}`.
 
 ## Without Docker
 
@@ -119,5 +116,6 @@ or a systemd user unit (`systemctl --user`), never with `nohup`.
 
 - A DNS record, when there's no base domain with a wildcard.
 - Enabling nesting and keyctl for Docker on an LXC host.
-- A self-hosted runner on a public repo: `runner.sh` asks the user to confirm.
+- A server for self-hosted runners, set up with `~/dev-baseline/docs/runner.md`.
+  On a public repo, GitHub advises against them.
 - Anything that costs money, or touches production data or production credentials.
